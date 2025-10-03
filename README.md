@@ -68,7 +68,7 @@ npm run build
 - 生成されたPNG画像は、ユーザーごとのホームディレクトリ配下にある `~/.cache/ai-image-api-mcp/images` に保存されます。
 - メタデータは `~/.cache/ai-image-api-mcp/metadata.json` に蓄積され、MCPのリソースAPIで参照できます。
 - リソースURI形式: `resource://ai-image-api/image/<uuid>`
-- MCPクライアントから `resources/list` を呼ぶと保存済み画像が一覧され、`resources/read` で画像データとメタ情報を取得できます。
+- MCPクライアントから `resources/list` を呼ぶと保存済み画像が一覧され、`resources/read` では `contents[0].blob` にPNG本体、`contents[0].mimeType` に `image/png` が格納されたレスポンスが返ります（同じURIでメタ情報のテキスト要素も同梱）。
 - `generate_image` のレスポンスには保存された画像の `resourceUri` が含まれます。
 
 ### キャッシュに保存された画像を確認する

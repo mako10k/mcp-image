@@ -218,15 +218,19 @@ class AiImageMcpServer {
 
       const base64 = await readImageBase64(record);
 
+      const description = `${new Date(record.createdAt).toISOString()} | ${record.model}`;
+
       return {
         contents: [
           {
-            type: 'image',
-            data: base64,
+            uri,
+            blob: base64,
             mimeType: 'image/png',
+            description,
           },
           {
-            type: 'text',
+            uri,
+            mimeType: 'text/plain',
             text: `Generated: ${record.createdAt}\nModel: ${record.model}\nPrompt: ${record.prompt}`,
           },
         ],
