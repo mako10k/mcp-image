@@ -17,7 +17,7 @@ import {
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AiImageApiClient } from './client.js';
-import { ImageGenerationParams, OptimizeParametersRequest } from './types.js';
+import { ImageGenerationParams, ImageSearchParams, OptimizeParametersRequest } from './types.js';
 import {
   saveImage,
   listImages,
@@ -141,6 +141,38 @@ class AiImageMcpServer {
               required: ['query'],
             },
           },
+          {
+            name: 'search_images',
+            description: '保存済みの生成画像をプロンプトやモデルで検索します。',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'プロンプトに含まれるキーワード（部分一致）',
+                },
+                model: {
+                  type: 'string',
+                  description: '生成に使用したモデル名での絞り込み',
+                },
+                limit: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 20,
+                  default: 5,
+                  description: '取得する結果件数の上限（1-20）',
+                },
+                before: {
+                  type: 'string',
+                  description: 'この日時より前に生成された画像に限定 (ISO 8601)',
+                },
+                after: {
+                  type: 'string',
+                  description: 'この日時以降に生成された画像に限定 (ISO 8601)',
+                },
+              },
+            },
+          },
         ],
       };
     });
@@ -162,6 +194,9 @@ class AiImageMcpServer {
 
           case 'optimize_prompt':
             return await this.handleOptimizePrompt(args as unknown as OptimizeParametersRequest);
+
+          case 'search_images':
+            return await this.handleSearchImages(args as unknown as ImageSearchParams);
 
           default:
             throw new McpError(
@@ -256,6 +291,99 @@ class AiImageMcpServer {
     }
 
     return resourceId;
+  }
+
+  private async handleSearchImages(params: ImageSearchParams = {}) {
+    const {
+      query,
+      model,
+      limit,
+      before,
+      after,
+    } = params;
+
+    const parsedLimit = limit !== undefined ? Number(limit) : undefined;
+    const normalizedLimit = Number.isFinite(parsedLimit)
+      ? Math.min(Math.max(Math.floor(parsedLimit as number), 1), 20)
+      : 5;
+
+    const beforeTime = before ? Date.parse(before) : undefined;
+    if (before && Number.isNaN(beforeTime)) {
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid "before" timestamp: ${before}`);
+    }
+
+    const afterTime = after ? Date.parse(after) : undefined;
+    if (after && Number.isNaN(afterTime)) {
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid "after" timestamp: ${after}`);
+    }
+
+    let images = await listImages();
+
+    const queryLower = query?.trim().toLowerCase();
+    if (queryLower) {
+      images = images.filter((record) => {
+        const promptMatch = record.prompt.toLowerCase().includes(queryLower);
+        const paramsMatch = JSON.stringify(record.params ?? {}).toLowerCase().includes(queryLower);
+        return promptMatch || paramsMatch;
+      });
+    }
+
+    const modelLower = model?.trim().toLowerCase();
+    if (modelLower) {
+      images = images.filter((record) => record.model.toLowerCase() === modelLower);
+    }
+
+    if (afterTime !== undefined) {
+      images = images.filter((record) => Date.parse(record.createdAt) >= afterTime);
+    }
+
+    if (beforeTime !== undefined) {
+      images = images.filter((record) => Date.parse(record.createdAt) <= beforeTime);
+    }
+
+    images.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+    const limited = images.slice(0, normalizedLimit);
+
+    if (limited.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: '条件に一致する画像は見つかりませんでした。',
+          },
+        ],
+      };
+    }
+
+    const lines = limited.map((record, index) => {
+      const timestamp = new Date(record.createdAt).toLocaleString();
+      const preview = record.prompt.length > 120 ? `${record.prompt.slice(0, 117)}...` : record.prompt;
+      return [
+        `${index + 1}. ${timestamp} | ${record.model}`,
+        `   Prompt: ${preview}`,
+        `   URI: ${getResourceUri(record.id)}`,
+      ].join('\n');
+    });
+
+    const truncated = images.length > limited.length;
+    const header = 'ローカルに保存された画像キャッシュから検索しました。AI Image API 側には検索用エンドポイントがないため、ローカルメタデータを参照しています。';
+
+    const summary = [
+      header,
+      '',
+      ...lines,
+      truncated ? '※ 指定件数を超える一致があるため先頭のみ返しています。' : '',
+    ].filter(Boolean).join('\n');
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: summary,
+        },
+      ],
+    };
   }
 
   /**

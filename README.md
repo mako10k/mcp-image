@@ -63,6 +63,16 @@ npm run build
 - `query` (必須): 最適化したいプロンプトまたは画像の説明
 - `target_model`: 対象とするモデル（オプション）
 
+### search_images
+保存済みの生成画像をローカルキャッシュから検索します。Modal 側の API には検索エンドポイントが存在しないため、MCP サーバーが保持しているメタデータをフィルターします。
+
+**パラメータ:**
+- `query`: プロンプトに含まれるキーワード（部分一致）
+- `model`: 生成に使用したモデル名での絞り込み
+- `limit`: 取得件数の上限（1-20、デフォルト5）
+- `before`: 指定日時より前に生成された画像に限定 (ISO 8601)
+- `after`: 指定日時以降に生成された画像に限定 (ISO 8601)
+
 ## 生成画像のリソース管理
 
 - 生成されたPNG画像は、ユーザーごとのホームディレクトリ配下にある `~/.cache/ai-image-api-mcp/images` に保存されます。
@@ -70,6 +80,7 @@ npm run build
 - リソースURI形式: `resource://ai-image-api/image/<uuid>`
 - MCPクライアントから `resources/list` を呼ぶと保存済み画像が一覧され、`resources/read` では `contents[0].blob` にPNG本体、`contents[0].mimeType` に `image/png` が格納されたレスポンスが返ります（同じURIでメタ情報のテキスト要素も同梱）。
 - `generate_image` のレスポンスには保存された画像の `resourceUri` が含まれます。
+- `search_images` ツールはこのメタデータを利用して検索を行います（ai-image-api 自体には検索用エンドポイントが存在しません）。
 
 ### キャッシュに保存された画像を確認する
 

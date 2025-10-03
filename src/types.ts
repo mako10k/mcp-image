@@ -73,3 +73,11 @@ export interface OptimizeParametersResponse {
   suggested_model?: string;
   recommended_params?: Record<string, any>;
 }
+
+export interface ImageSearchParams {
+  query?: string;
+  model?: string;
+  limit?: number;
+  before?: string;
+  after?: string;
+}
