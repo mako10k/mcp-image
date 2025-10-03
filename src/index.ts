@@ -17,7 +17,7 @@ import {
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AiImageApiClient } from './client.js';
-import { ImageGenerationParams, ImageSearchParams, OptimizeParametersRequest } from './types.js';
+import { ImageGenerationParams, ImageSearchParams, OptimizeParametersRequest, OptimizeAndGenerateParams } from './types.js';
 import {
   saveImage,
   listImages,
@@ -173,6 +173,45 @@ class AiImageMcpServer {
               },
             },
           },
+          {
+            name: 'optimize_and_generate',
+            description: 'プロンプトを最適化し、その結果を使って画像生成を一括で行います。',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: '生成したい内容の説明',
+                },
+                target_model: {
+                  type: 'string',
+                  description: '優先的に使用したいモデル名（オプション）',
+                },
+                quality_tier: {
+                  type: 'string',
+                  enum: ['draft', 'standard', 'premium'],
+                  default: 'standard',
+                  description: '品質レベルの希望（最適化されたパラメータで上書きされる場合があります）',
+                },
+                size_preference: {
+                  type: 'string',
+                  enum: ['small', 'medium', 'large'],
+                  default: 'medium',
+                  description: '出力解像度の目安（最適化結果によって調整される場合があります）',
+                },
+                experimental: {
+                  type: 'boolean',
+                  default: false,
+                  description: '実験的モデル（SDXLなど）を優先的に使用',
+                },
+                style_hint: {
+                  type: 'string',
+                  description: '追加したいスタイルやテイスト（オプション）',
+                },
+              },
+              required: ['query'],
+            },
+          },
         ],
       };
     });
@@ -197,6 +236,9 @@ class AiImageMcpServer {
 
           case 'search_images':
             return await this.handleSearchImages(args as unknown as ImageSearchParams);
+
+          case 'optimize_and_generate':
+            return await this.handleOptimizeAndGenerate(args as unknown as OptimizeAndGenerateParams);
 
           default:
             throw new McpError(
@@ -433,6 +475,7 @@ class AiImageMcpServer {
       params: {
         ...generateRequest,
         used_params: result.used_params ?? {},
+        job_id: result.job_id,
       },
     });
 
@@ -447,7 +490,7 @@ class AiImageMcpServer {
         },
         {
           type: 'text',
-          text: `画像を生成しました！\n\n**使用されたパラメータ:**\n- プロンプト: ${enhancedPrompt}\n- モデル: ${generateRequest.model}\n- ステップ数: ${generateRequest.steps}\n- ガイダンススケール: ${generateRequest.guidance_scale}\n- サイズ: ${generateRequest.width}x${generateRequest.height}\n- シード: ${generateRequest.seed}\n- リソースURI: ${resourceUri}`,
+          text: `画像を生成しました！\n\n**使用されたパラメータ:**\n- プロンプト: ${enhancedPrompt}\n- モデル: ${generateRequest.model}\n- ステップ数: ${generateRequest.steps}\n- ガイダンススケール: ${generateRequest.guidance_scale}\n- サイズ: ${generateRequest.width}x${generateRequest.height}\n- シード: ${generateRequest.seed}\n- ジョブID: ${result.job_id ?? 'N/A'}\n- リソースURI: ${resourceUri}`,
         },
       ],
     };
@@ -524,17 +567,32 @@ class AiImageMcpServer {
     
     const result = await this.apiClient.optimizeParameters({ query, model });
 
+    const suggestedModel = result.suggested_model || result.model || '未指定';
+    const recommendedParams = result.recommended_params ?? {
+      guidance_scale: result.guidance_scale,
+      steps: result.steps,
+      width: result.width,
+      height: result.height,
+      seed: result.seed,
+    };
+
     const optimizationDetails = [
       `**最適化されたプロンプト:**\n${result.prompt}`,
       ``,
       `**ネガティブプロンプト:**\n${result.negative_prompt || 'なし'}`,
       ``,
-      `**推奨モデル:** ${result.suggested_model}`,
+      `**推奨モデル:** ${suggestedModel}`,
     ];
 
-    if (result.recommended_params) {
+    if (result.reason) {
+      optimizationDetails.push('', `**理由:**\n${result.reason}`);
+    }
+
+    if (recommendedParams) {
       optimizationDetails.push('', '**推奨パラメータ:**');
-      Object.entries(result.recommended_params).forEach(([key, value]) => {
+      Object.entries(recommendedParams)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .forEach(([key, value]) => {
         optimizationDetails.push(`- ${key}: ${value}`);
       });
     }
@@ -544,6 +602,167 @@ class AiImageMcpServer {
         {
           type: 'text',
           text: optimizationDetails.join('\n'),
+        },
+      ],
+    };
+  }
+
+  private async handleOptimizeAndGenerate(params: OptimizeAndGenerateParams) {
+    const {
+      query,
+      target_model,
+      quality_tier = 'standard',
+      size_preference = 'medium',
+      experimental = false,
+      style_hint,
+    } = params;
+
+    console.log(`[AI Image] Optimize & generate workflow started for query: "${query}"`);
+
+    const qualitySettings = {
+      draft: { steps: 10, guidance_scale: 5.0 },
+      standard: { steps: 20, guidance_scale: 7.5 },
+      premium: { steps: 30, guidance_scale: 9.0 },
+    } as const;
+
+    const sizeSettings = {
+      small: { width: 512, height: 512 },
+      medium: { width: 768, height: 768 },
+      large: { width: 1024, height: 1024 },
+    } as const;
+
+    const optimization = await this.apiClient.optimizeParameters({ query, model: target_model });
+
+    const recommended = optimization.recommended_params ?? {};
+    const fallbackModel = experimental ? 'sdxl' : 'dreamshaper8';
+    const resolvedModel = optimization.model
+      ?? optimization.suggested_model
+      ?? target_model
+      ?? fallbackModel;
+
+    const basePrompt = optimization.prompt || query;
+    const finalPrompt = style_hint ? `${basePrompt}, ${style_hint}` : basePrompt;
+    const negativePrompt = optimization.negative_prompt && optimization.negative_prompt.trim().length > 0
+      ? optimization.negative_prompt
+      : 'blurry, low quality, bad anatomy, distorted';
+
+  const qualityPreset = qualitySettings[quality_tier] ?? qualitySettings.standard;
+  const sizePreset = sizeSettings[size_preference] ?? sizeSettings.medium;
+
+    const pickNumber = (...values: Array<number | undefined | null>): number | undefined => {
+      for (const value of values) {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          return value;
+        }
+      }
+      return undefined;
+    };
+
+    const pickInteger = (...values: Array<number | undefined | null>): number | undefined => {
+      for (const value of values) {
+        if (typeof value === 'number' && Number.isInteger(value)) {
+          return value;
+        }
+      }
+      return undefined;
+    };
+
+    const generationRequest = {
+      prompt: finalPrompt,
+      negative_prompt: negativePrompt,
+      model: resolvedModel,
+      guidance_scale: pickNumber(
+        (recommended as Record<string, any>).guidance_scale,
+        optimization.guidance_scale,
+        qualityPreset.guidance_scale,
+      ) ?? qualityPreset.guidance_scale,
+      steps: pickInteger(
+        (recommended as Record<string, any>).steps,
+        optimization.steps,
+        qualityPreset.steps,
+      ) ?? qualityPreset.steps,
+      width: pickInteger(
+        (recommended as Record<string, any>).width,
+        optimization.width,
+        sizePreset.width,
+      ) ?? sizePreset.width,
+      height: pickInteger(
+        (recommended as Record<string, any>).height,
+        optimization.height,
+        sizePreset.height,
+      ) ?? sizePreset.height,
+      seed: pickInteger(
+        (recommended as Record<string, any>).seed,
+        optimization.seed,
+      ) ?? Math.floor(Math.random() * 2147483647),
+    };
+
+    const generationResult = await this.apiClient.generateImage(generationRequest);
+
+    const record = await saveImage(generationResult.image_base64, {
+      prompt: finalPrompt,
+      model: generationRequest.model,
+      params: {
+        ...generationRequest,
+        used_params: generationResult.used_params ?? {},
+        job_id: generationResult.job_id,
+        optimization: {
+          request: { query, target_model, quality_tier, size_preference, experimental, style_hint },
+          response: optimization,
+        },
+      },
+    });
+
+    const resourceUri = getResourceUri(record.id);
+
+    const parameterLines = [
+      `- モデル: ${generationRequest.model}`,
+      `- ステップ数: ${generationRequest.steps}`,
+      `- ガイダンススケール: ${generationRequest.guidance_scale}`,
+      `- サイズ: ${generationRequest.width}x${generationRequest.height}`,
+      `- シード: ${generationRequest.seed}`,
+      `- ジョブID: ${generationResult.job_id ?? 'N/A'}`,
+      `- リソースURI: ${resourceUri}`,
+    ];
+
+    const optimizationSummary = [
+      `**最適化の結果:**`,
+      `- 推奨プロンプト: ${basePrompt}`,
+      `- ネガティブプロンプト: ${optimization.negative_prompt || 'なし'}`,
+      `- 推奨モデル: ${optimization.model ?? optimization.suggested_model ?? target_model ?? fallbackModel}`,
+    ];
+
+    if (optimization.reason) {
+      optimizationSummary.push(`- 理由: ${optimization.reason}`);
+    }
+
+    if (optimization.recommended_params) {
+      optimizationSummary.push('- 推奨パラメータ:');
+      Object.entries(optimization.recommended_params)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .forEach(([key, value]) => {
+          optimizationSummary.push(`  - ${key}: ${value}`);
+        });
+    }
+
+    return {
+      content: [
+        {
+          type: 'image',
+          data: generationResult.image_base64,
+          mimeType: 'image/png',
+        },
+        {
+          type: 'text',
+          text: [
+            '**最終プロンプト:**',
+            finalPrompt,
+            '',
+            '**生成に使用したパラメータ:**',
+            ...parameterLines,
+            '',
+            ...optimizationSummary,
+          ].join('\n'),
         },
       ],
     };

@@ -14,7 +14,8 @@ export interface Txt2ImgRequest {
 
 export interface Txt2ImgResponse {
   image_base64: string;
-  used_params: Record<string, any>;
+  used_params?: Record<string, any>;
+  job_id?: string;
 }
 
 export interface ModelInfo {
@@ -65,11 +66,19 @@ export interface ImageGenerationParams {
 export interface OptimizeParametersRequest {
   query: string;
   model?: string;
+  maxIterations?: number;
 }
 
 export interface OptimizeParametersResponse {
   prompt: string;
   negative_prompt?: string;
+  model?: string;
+  guidance_scale?: number;
+  steps?: number;
+  width?: number;
+  height?: number;
+  seed?: number | null;
+  reason?: string;
   suggested_model?: string;
   recommended_params?: Record<string, any>;
 }
@@ -80,4 +89,30 @@ export interface ImageSearchParams {
   limit?: number;
   before?: string;
   after?: string;
+}
+
+export interface JobSubmissionResponse {
+  job_id: string;
+}
+
+export interface JobStatusResponse {
+  status: string;
+  progress?: number | null;
+  eta?: number | null;
+}
+
+export interface JobResultResponse {
+  status: string;
+  image_base64?: string;
+  error?: string;
+  used_params?: Record<string, any>;
+}
+
+export interface OptimizeAndGenerateParams {
+  query: string;
+  target_model?: string;
+  quality_tier?: 'draft' | 'standard' | 'premium';
+  size_preference?: 'small' | 'medium' | 'large';
+  experimental?: boolean;
+  style_hint?: string;
 }
