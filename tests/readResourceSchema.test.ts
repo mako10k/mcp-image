@@ -4,6 +4,9 @@ import os from 'os';
 import path from 'path';
 import { promises as fs } from 'fs';
 
+import dotenv from 'dotenv';
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
 const ONE_BY_ONE_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Yfzi2cAAAAASUVORK5CYII=';
 

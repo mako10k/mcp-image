@@ -10,14 +10,41 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 const TMP_ROOT = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-image-mcp-e2e-'));
 process.env.AI_IMAGE_API_MCP_STORAGE_ROOT = TMP_ROOT;
 
+// Import MCP server and storage modules
 const { AiImageMcpServer } = await import('../src/index.js');
 const storage = await import('../src/storage.js');
+
+// Create a single AiImageApiClient instance that will be used for all operations
+// This ensures all API calls (generation, retrieval, search) use the same JOBAPI endpoint
 const clientModule = await import('../src/client.js');
 const client = new clientModule.AiImageApiClient();
+
+// Create MCP server instance for handler testing
+const server = new AiImageMcpServer();
 
 let generatedToken: string = '';
 let generatedId: string = '';
 let generatedPrompt = 'E2E test cat, vector, pink';
+
+// Helper: Save generated image to local storage for later retrieval tests
+async function saveGeneratedImage(result: any, prompt: string, model: string) {
+  if (!result.image_base64) {
+    console.warn('No image_base64 in result, skipping local save');
+    return null;
+  }
+  
+  const record = await storage.saveImage(result.image_base64, {
+    prompt: prompt,
+    model: model,
+    params: result.used_params || {},
+    imageToken: result.image_token,
+    metadata: result.metadata,
+    downloadUrl: result.download_url,
+    mimeType: result.mime_type || 'image/png',
+  });
+  
+  return record;
+}
 
 // 1. generate_image 正常系
 
@@ -35,13 +62,19 @@ test('generate_image: normal', async () => {
   assert.ok(result.image_token, 'image_token should be present');
   assert.ok(result.image_base64, 'image_base64 should be present');
   generatedToken = result.image_token;
+  
+  // Save to local storage for later retrieval tests
+  const record = await saveGeneratedImage(result, generatedPrompt, 'dreamshaper8');
+  if (record) {
+    generatedId = record.id;
+  }
 });
 
 // 2. generate_image 異常系（空プロンプト）
 test('generate_image: invalid prompt', async () => {
   await assert.rejects(
     () => client.generateImage({ prompt: '', model: 'dreamshaper8' }),
-    /prompt.*required/
+    /422|prompt|required|min_length/i  // API側で422エラーが返ることを確認
   );
 });
 
@@ -62,6 +95,9 @@ test('optimize_and_generate_image: normal', async () => {
     include_metadata: true,
   });
   assert.ok(genResult.image_token, 'image_token should be present');
+  
+  // Save to local storage
+  await saveGeneratedImage(genResult, result.prompt, 'dreamshaper8');
 });
 
 // 4. get_available_models
