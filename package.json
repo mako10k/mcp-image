@@ -1,15 +1,26 @@
 {
-  "name": "ai-image-api-mcp-server",
+  "name": "@mako10k/mcp-image",
   "version": "1.0.0",
-  "description": "MCP Server for AI Image Generation API",
+  "description": "MCP Server for AI Image Generation API via JOBAPI",
   "main": "dist/index.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mako10k/mcp-image.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mako10k/mcp-image/issues"
+  },
+  "homepage": "https://github.com/mako10k/mcp-image#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-  "test": "tsx --test tests/**/*.test.ts",
-  "test:connection": "tsx src/test.ts",
+    "test": "tsx --test tests/**/*.test.ts",
+    "test:connection": "tsx src/test.ts",
     "demo": "tsx src/demo.ts",
     "generate-samples": "tsx src/generate-samples.ts",
     "single-test": "tsx src/single-test.ts"
@@ -26,6 +37,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
     "axios": "^1.7.2",
+    "dotenv": "^17.2.3",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
@@ -34,6 +46,11 @@
     "typescript": "^5.3.0"
   },
   "bin": {
-    "ai-image-api-mcp-server": "dist/index.js"
-  }
+    "mcp-image": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }
