@@ -1,0 +1,15 @@
+{
+	"servers": {
+		"ai-image-api-mcp-server": {
+			"type": "stdio",
+			"command": "node",
+			"args": [
+				"/absolute/path/to/mcp-image/dist/index.js"
+			],
+			"env": {
+				"MODAL_JOB_API_URL": "https://your-deployment--ai-image-jobapi-serve.modal.run",
+				"JOBAPI_API_KEY": "your-api-key-here"
+			}
+		}
+	}
+}
