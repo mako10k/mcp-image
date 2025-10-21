@@ -7,6 +7,9 @@ dist/
 # Logs and caches
 logs/
 *.log
+ai-image-mcp-e2e-*/
+mcp_demo_cherry_cat.png
+sample_*.png
 
 # Local environment
 .env
