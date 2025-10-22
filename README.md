@@ -27,17 +27,33 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 	 npm run build
 	 ```
 
-3. Configure your JOB API server URL:
+3. Install the CLI and avoid bin name conflicts:
 
 	 ```bash
-	 # Copy the example environment file
-	 cp .env.example .env
-	 
-	 # Edit .env with your JOB API server URL and API key
-	 nano .env
+	 # Remove any legacy/unscoped package that publishes the same bin name.
+	 npm uninstall -g mcp-image 2>/dev/null || true
+	 npm uninstall mcp-image 2>/dev/null || true
+
+	 # Install the scoped CLI locally (recommended) or globally if desired.
+	 npm install --save-dev @mako10k/mcp-image
+	 # or: npm install -g @mako10k/mcp-image
 	 ```
 
-4. Register the server with your MCP client (for example, VS Code):
+	 `npx` / `npm exec` resolve binaries by name. A previously installed unscoped
+	 package called `mcp-image` can shadow this CLI and cause silent exits. Ensure
+	 only `@mako10k/mcp-image` remains installed before running commands such as
+	 `npx @mako10k/mcp-image`. See the Model Context Protocol guidance on connecting
+	 local servers for additional background. [[Connect to local MCP servers |
+	 modelcontextprotocol.io](https://modelcontextprotocol.io/docs/develop/connect-local-servers)]
+
+4. Configure your JOB API server URL by exporting environment variables:
+
+	 ```bash
+	 export MODAL_JOB_API_URL="https://your-deployment--ai-image-jobapi-serve.modal.run"
+	 export JOBAPI_API_KEY="your-api-key-here"
+	 ```
+
+5. Register the server with your MCP client (for example, VS Code):
 
 	 ```bash
 	 # Copy the example MCP configuration
@@ -78,6 +94,25 @@ Example:
 export MODAL_JOB_API_URL=https://your-deployment--ai-image-jobapi-serve.modal.run
 export JOBAPI_API_KEY=your-api-key-here
 ```
+
+### Running the CLI quickly with npx / npm exec
+
+Once the conflicting package cleanup is complete you can launch the server via
+
+```bash
+npx --yes @mako10k/mcp-image
+# or
+npm exec --yes @mako10k/mcp-image
+```
+
+If you must keep the unscoped `mcp-image` package for another project, prefer an
+explicit path:
+
+```bash
+./node_modules/.bin/mcp-image
+```
+
+This ensures the scoped CLI is selected even when other versions are present.
 
 The JOB API server provides the following endpoints:
 - `POST /text-to-image` - Image generation (proxies Modal text-to-image)

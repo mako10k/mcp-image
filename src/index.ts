@@ -6,6 +6,8 @@
  * and exposes them through the MCP protocol.
  */
 
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -30,13 +32,14 @@ import {
 
 export class AiImageMcpServer {
   private server: Server;
-  private apiClient: AiImageApiClient;
+  private apiClient: AiImageApiClient | null = null;
+  private configWarningShown = false;
 
   constructor() {
     this.server = new Server(
       {
         name: 'ai-image-api-mcp-server',
-        version: '1.0.0',
+  version: '1.0.3',
       },
       {
         capabilities: {
@@ -46,10 +49,10 @@ export class AiImageMcpServer {
       }
     );
 
-    this.apiClient = new AiImageApiClient();
     this.setupToolHandlers();
     this.setupResourceHandlers();
     this.setupErrorHandling();
+    this.warnIfConfigMissing();
   }
 
   private setupErrorHandling(): void {
@@ -64,7 +67,7 @@ export class AiImageMcpServer {
   }
 
   private setupToolHandlers(): void {
-  // Provide tool list
+    // Provide tool list
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
@@ -247,7 +250,7 @@ export class AiImageMcpServer {
       };
     });
 
-  // Tool execution handler
+    // Tool execution handler
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
@@ -319,6 +322,45 @@ export class AiImageMcpServer {
       const { uri } = request.params;
       return this.buildReadResourceResponse(uri);
     });
+  }
+
+  private isConfigured(): boolean {
+    const jobApiUrl = (
+      process.env.JOB_API_SERVER_URL
+      || process.env.JOBAPI_URL
+      || process.env.MODAL_JOB_API_URL
+      || ''
+    ).trim();
+
+    return jobApiUrl.length > 0;
+  }
+
+  private warnIfConfigMissing(): void {
+    if (!this.isConfigured() && !this.configWarningShown) {
+      console.warn('[AI Image] Modal Job API URL is not configured. Set MODAL_JOB_API_URL (or JOB_API_SERVER_URL/JOBAPI_URL) before invoking tools.');
+      this.configWarningShown = true;
+    }
+  }
+
+  private getApiClient(): AiImageApiClient {
+    if (this.apiClient) {
+      return this.apiClient;
+    }
+
+    try {
+      this.apiClient = new AiImageApiClient();
+      return this.apiClient;
+    } catch (error) {
+      this.warnIfConfigMissing();
+
+      const message = error instanceof Error ? error.message : 'Unknown configuration error';
+      console.error('[AI Image] Failed to initialize Modal Job API client:', message);
+
+      throw new McpError(
+        ErrorCode.InternalError,
+        'AI Image MCP server is not configured correctly. Ensure MODAL_JOB_API_URL (or JOB_API_SERVER_URL/JOBAPI_URL) is set before using this tool.'
+      );
+    }
   }
 
   private async buildReadResourceResponse(uri: string) {
@@ -741,7 +783,7 @@ export class AiImageMcpServer {
 
     console.log(`[AI Image] Generating image via Modal | model=${sanitized.model ?? 'default'} prompt="${promptValue}"`);
 
-    const response = await this.apiClient.generateImage(sanitized);
+    const response = await this.getApiClient().generateImage(sanitized);
     const usedParamsRecord = (response.used_params ?? {}) as Record<string, unknown>;
 
     let base64Payload = typeof response.image_base64 === 'string'
@@ -863,7 +905,7 @@ export class AiImageMcpServer {
   private async handleGetAvailableModels() {
     console.log('[AI Image] Fetching available models');
     
-    const result = await this.apiClient.getModels();
+    const result = await this.getApiClient().getModels();
 
     const modelsList = Object.entries(result.models).map(([name, config]) => 
       `- **${name}**: ${config.repo} - ${config.description}`
@@ -887,7 +929,7 @@ export class AiImageMcpServer {
     
     console.log(`[AI Image] Fetching model detail for: ${model_name}`);
     
-    const result = await this.apiClient.getModelDetail(model_name);
+    const result = await this.getApiClient().getModelDetail(model_name);
     const model = result.model;
 
     const details = [
@@ -1003,7 +1045,7 @@ export class AiImageMcpServer {
       ? { query: queryValue, model: selectedModel }
       : { query: queryValue };
 
-    const result = await this.apiClient.optimizeParameters(optimizeRequest);
+    const result = await this.getApiClient().optimizeParameters(optimizeRequest);
 
     return {
       content: [
@@ -1047,7 +1089,7 @@ export class AiImageMcpServer {
       ? { query: queryValue, model: optimizeModel }
       : { query: queryValue };
 
-    const optimizeResult = await this.apiClient.optimizeParameters(optimizeRequest);
+    const optimizeResult = await this.getApiClient().optimizeParameters(optimizeRequest);
 
     const mergedRecommendations: Record<string, unknown> = {
       ...(optimizeResult.recommended_params ?? {}),
@@ -1136,8 +1178,38 @@ export class AiImageMcpServer {
     console.error('AI Image API MCP Server running on stdio');
   }
 }
-// Start the server when executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = new AiImageMcpServer();
-  server.run().catch(console.error);
+const startServer = async () => {
+  try {
+    const server = new AiImageMcpServer();
+    await server.run();
+  } catch (error) {
+    console.error('[AI Image] Failed to start MCP server', error);
+    process.exit(1);
+  }
+};
+
+const isCliEntryPoint = (): boolean => {
+  const argvPath = process.argv[1];
+  if (typeof argvPath !== 'string' || argvPath.length === 0) {
+    return false;
+  }
+
+  try {
+    const cliRealPath = realpathSync(argvPath);
+    const moduleRealPath = realpathSync(fileURLToPath(import.meta.url));
+    if (process.env.MCP_IMAGE_DEBUG_ENTRY === '1') {
+      console.error('[AI Image][debug] cliRealPath=%s moduleRealPath=%s', cliRealPath, moduleRealPath);
+    }
+    return cliRealPath === moduleRealPath;
+  } catch {
+    return false;
+  }
+};
+
+// Start the server when executed directly (including via npm exec/npx symlinks)
+if (isCliEntryPoint()) {
+  startServer().catch((error) => {
+    console.error('[AI Image] Unexpected error while starting MCP server', error);
+    process.exit(1);
+  });
 }
