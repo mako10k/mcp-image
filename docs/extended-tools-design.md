@@ -25,165 +25,228 @@ Job API 側の該当エンドポイント（OpenAPI 取得済）
 
 目的: 入力画像の内容を説明するテキスト（キャプション）を生成。
 
-API マッピング
-- Job API: POST /images/caption
-- 入力: 画像（token/base64/url 等）、言語、スタイル等
-- 出力: `{ caption: string, language?: string, confidence?: number, metadata?: object }`
+API マッピング（OpenAPI 真偽確認済み）
+- Job API: POST `/images/caption`
+- リクエスト: `ImageCaptionRequest`
+  - `image_token?`: ImageStore に保存済みの画像トークン
+  - `image_base64?`: Base64 エンコード済み RGB 画像
+  - `prompt?`: BLIP-2 へ加える追加プロンプト
+  - `max_new_tokens? (1-512, default 64)`
+  - `temperature? (0-2, default 0)`
+  - `top_p? (0-1, default 0.95)`
+  - `use_nucleus_sampling? (boolean, default false)`
+  - `repetition_penalty? (0.5-2, default 1)`
+  - `model_id?`: BLIP-2 モデル指定
+- レスポンス: `ImageCaptionResponse`
+  - 必須: `caption`, `model_id`, `device`, `dtype`, `metadata`
+  - 任意: `image_token`, `image_metadata`
 
-提案する MCP ツール定義（概略）
+提案する MCP ツール定義（更新版）
 - name: `caption_image`
-- inputSchema (JSON Schema 概要)
-  - image_token?: string
-  - resource_uri?: string
-  - image_base64?: string
-  - image_url?: string
-  - language?: string (例: "ja", "en")
-  - style?: string (例: "short", "detailed")
-  - store_to_metadata?: boolean (default: false) … true の場合は PATCH /images/{image_token}/meta で `caption` を格納
-- 出力 content
-  - application/json: {
-      image_token?: string,
-      resource_uri?: string,
-      caption: string,
-      language?: string,
-      confidence?: number,
-      metadata?: object,
-      stored_to_metadata?: boolean
-    }
+- inputSchema
+  - `resource_uri?`
+  - `image_token?`
+  - `image_base64?`
+  - `image_url?`（Job API が URL を直接受け取らないため、必要なら先に store-from-url で解決）
+  - `prompt?`
+  - `max_new_tokens?`
+  - `temperature?`
+  - `top_p?`
+  - `use_nucleus_sampling?`
+  - `repetition_penalty?`
+  - `model_id?`
+  - `store_to_metadata?: boolean`（default false。true の場合は PATCH `/images/{image_token}/meta` を発行し caption を保存）
+
+出力 content
+- [0]（任意）application/json: `caption` 等を含む本 API レスポンス＋ `resource_uri`
+- store_to_metadata=true の場合は `stored_to_metadata: true` を追加して結果を明示
 
 入力解決ロジック
-1) resource_uri があればローカルメタデータから image_token と base64 を取得
-2) image_token があれば GET /images/{image_token} で取得（base64 同梱/必要時）
-3) image_base64 直接渡し
-4) image_url を Job API にそのまま転送（APIが許容する場合）
+1. `resource_uri` → ローカルキャッシュから `image_token` と base64 を取得
+2. `image_token` → GET `/images/{image_token}` でデータ取得（base64 未提供なら download_url 経由の保存ロジックを流用）
+3. `image_base64` → そのまま転送
+4. `image_url` → 直接は不可。`store_image_from_url` で事前登録し、得た `image_token` を使用
 
 エラー/検証
-- いずれの画像参照も無い場合: InvalidRequest
-- language/style が空文字は未指定扱い
-- store_to_metadata が true かつ image_token 不明: InvalidRequest（保存先が特定できない）
+- 画像参照 (`resource_uri`/`image_token`/`image_base64`) が一つも無い場合: `InvalidRequest`
+- 引数値は OpenAPI の min/max を尊重してバリデーション（範囲外なら `InvalidRequest`）
+- `store_to_metadata=true` かつ `image_token` 不明: `InvalidRequest`
 
 テスト
-- 最小: resource_uri 指定で caption が返る
-- language=ja/en を切替
-- store_to_metadata=true で PATCH 成功し、再取得したメタに caption が反映
+- 基本: `resource_uri` 指定で caption が返り JSON が正しい
+- パラメータ境界: `max_new_tokens=1` と `512`、`temperature=0/2`
+- `store_to_metadata=true` で PATCH 成功し、GET `/images/{token}/meta` に caption が付与される
 
 ---
 
 ## 2) upscale ツール
 
-目的: 入力画像を指定倍率またはサイズで高解像度化。
+目的: 入力画像を指定倍率で高解像度化。
 
 API マッピング
-- Job API: POST /upscale
-- 入力: 画像、scale または target_width/target_height、model/denoise 等（API仕様に追随）
-- 出力: 画像＋メタデータ
+- Job API: POST `/upscale`
+- リクエスト: `UpscaleRequest`
+  - `image_token`（必須）
+  - `scale?`（int, 1–8, default 2）
+- レスポンス: `UpscaleJobStatusResponse { job_id: string, status: string }`
+  - アップスケールは非同期ジョブ。完了画像を得るには `/jobs/{job_id}/result` で `include_base64=true` を指定し、`JobResultResponse` を取得。
 
-提案する MCP ツール定義（概略）
+提案する MCP ツール定義（更新版）
 - name: `upscale_image`
 - inputSchema
-  - image_token?|resource_uri?|image_base64?|image_url?
-  - scale?: number (例: 2, 4) … scale があれば target_* より優先
-  - target_width?: integer (multipleOf:64)
-  - target_height?: integer (multipleOf:64)
-  - model?: string (例: "ESRGAN")
-  - denoise_strength?: number
-- 出力 content
-  - [0] image/png
-  - [1] application/json: {
-      image_token: string,
-      resource_uri: string,
-      prompt?: string,           // 可能なら元画像の情報
-      model?: string,
-      created_at: string,
-      used_params: object,
-      metadata: object,
-      original_image_token?: string
-    }
+  - `resource_uri?`
+  - `image_token?`
+  - `scale?`（1–8 の整数。未指定時は 2）
+  - `poll_timeout_seconds?`（ジョブ完了待ちの上限値。default 300）
+  - `poll_interval_seconds?`（default 5）
 
-保存
-- 成功時は `saveImage()` を利用してキャッシュ。
-- `original_image_token` を metadata に格納しトレーサビリティを確保。
+ジョブ処理フロー
+1. 画像参照を `image_token` に解決（resource_uri → token、image_base64 は一旦 `/images/store` で保存して token 化）。
+2. POST `/upscale` を実行し `job_id` を取得。
+3. `/jobs/{job_id}/status` で進捗確認。`status` が `succeeded` になるまでポーリング。
+4. `/jobs/{job_id}/result?include_base64=true` を取得。
+5. 戻り値の `image_base64` を `saveImage()` に渡し、`metadata` に `upscaled_from: <元token>` を追記。
+
+出力 content
+- [0] image/png（`image_base64` から）
+- [1] application/json: {
+    image_token,
+    resource_uri,
+    created_at,
+    upscale_job: { job_id, status },
+    used_params: { scale },
+    metadata,
+    original_image_token: <入力トークン>
+  }
 
 検証
-- scale と target_* が両方指定: scale を採用し target_* は無視（またはエラーにする方針も可）
-- target_* 指定は 256–4096、64 の倍数に丸め/検証
+- `scale` が 1–8 の整数でない場合は `InvalidRequest`
+- 画像トークン未解決時は `InvalidRequest`
+- ポーリングが `poll_timeout_seconds` を超えたら `InternalError`
+
+テスト
+- `scale=2` の基本ケース
+- `poll_timeout_seconds` より長いジョブでタイムアウト動作を確認
+- `resource_uri` 経由での解決
 
 ---
 
 ## 3) image-to-image ツール
 
-目的: 既存画像から変換生成（スタイル変更・構図保持など）。
+目的: 既存画像から新しい画像を生成（構図保持・スタイル変更）。
 
 API マッピング
-- Job API: POST /image-to-image（同期） もしくは POST /jobs/image-to-image（非同期）
-- 本サーバでは同期 API を優先。長時間化が懸念される場合はタイムアウト延長か、jobs API を利用してポーリング実装を選択可能なフラグを提供。
+- 迅速な同期生成: POST `/image-to-image`
+  - リクエスト: `ImageToImageJobRequest`
+    - 必須: `prompt`, `init_image_token`
+    - 任意: `negative_prompt`, `model` (default `sd21`), `guidance_scale` (default 7.5), `steps` (default 20), `width` (default 512), `height` (default 512), `seed`, `strength` (default 0.7)
+  - クエリ: `include_base64`（default false。true でベース64同梱）
+  - レスポンス: `ImageToImageJobResponse`（`image_token`, `metadata`, `used_params`, `image_base64?`）
+- 長時間ジョブ: POST `/jobs/image-to-image` → `/jobs/{job_id}/status` → `/jobs/{job_id}/result`
 
-提案する MCP ツール定義（概略）
+提案する MCP ツール定義（更新版）
 - name: `image_to_image`
 - inputSchema
-  - source: { resource_uri?|image_token?|image_base64?|image_url? }（必須いずれか）
-  - prompt?: string
-  - negative_prompt?: string
-  - strength?: number (0–1 推奨)
-  - guidance_scale?: number
-  - steps?: integer
-  - width?: integer (multipleOf:64)
-  - height?: integer (multipleOf:64)
-  - model?: string
-  - seed?: integer
-  - scheduler?: string
-  - async?: boolean (default: false) … true の場合は jobs API を使い、`job_id` を返してクライアントでフォロー可能に
-- 出力 content（同期）
-  - [0] image/png
-  - [1] application/json: {
-      image_token: string,
-      resource_uri: string,
-      model: string,
-      prompt?: string,
-      created_at: string,
-      used_params: object,
-      metadata: object,
-      source_image_token?: string
-    }
-- 出力 content（非同期 async=true）
-  - application/json: { job_id: string, status: "queued"|"running"|..., poll_endpoints: { status: "/jobs/{id}/status", result: "/jobs/{id}/result" } }
+  - `resource_uri?`
+  - `image_token?`
+  - `image_base64?`（必要なら先に `/images/store` で変換）
+  - `prompt`（必須）
+  - `negative_prompt?`
+  - `model?`
+  - `guidance_scale?`
+  - `steps?`
+  - `width?`
+  - `height?`
+  - `seed?`
+  - `strength?`
+  - `include_base64?: boolean`（default true）
+  - `async?: boolean`（default false）
+  - `poll_timeout_seconds?`, `poll_interval_seconds?`（async=true のときに使用）
 
-検証/制約
-- prompt なしでも strength が低ければ元画像重視の変換として許容
-- width/height 未指定時はソース画像寸法を既定に使用
+処理フロー
+1. 画像参照から `init_image_token` を解決。
+2. `async=false`（既定）: `/image-to-image?include_base64=true` を呼び、レスポンスの `image_base64` をキャッシュ。
+3. `async=true`: `/jobs/image-to-image` でジョブ作成 → ポーリングで完了 → `/jobs/{job_id}/result?include_base64=true` 取得。
+4. SaveImage 時に `metadata.source_image_token` と `metadata.used_params` を記録。
 
+検証
+- `prompt` は空文字不可 → `InvalidRequest`
+- `width`/`height` は 64 の倍数で 256–2048 → 既存のバリデータを再利用
+- `strength` は 0–1 の範囲に収める
+
+出力 content（同期）
+- [0] image/png
+- [1] application/json: {
+    image_token,
+    resource_uri,
+    model,
+    prompt,
+    created_at,
+    used_params,
+    metadata,
+    source_image_token
+  }
+
+出力 content（非同期）
+- application/json: { job_id, status, poll_endpoints: { status, result } }
+
+テスト
+- 同期モードで `include_base64=true`
+- 非同期モードでポーリング完走と結果保存
+- `resource_uri` → `image_token` 解決
 ---
 
 ## 4) store-from-url ツール
 
-目的: 公開 URL の画像を JOB API 経由で取得し、サーバのキャッシュとメタデータに登録。
+目的: 外部 URL の画像を Job API 経由で ImageStore に登録し、ローカルキャッシュへ保存。
 
 API マッピング
-- Job API: POST /images/store-from-url
+- Job API: POST `/images/store-from-url`
+- リクエスト: `ImageUrlUploadRequest`
+  - `url`（必須, http/https, 最大長 2083）
+  - 任意: `source` (default `url-import`), `prompt`, `negative_prompt`, `parameters`, `derived_from`, `tags`, `extra`, `filename`, `timeout`, `max_bytes`
+- レスポンス: `ImageUploadResponse { image_token, metadata }`
 
-提案する MCP ツール定義（概略）
+提案する MCP ツール定義（更新版）
 - name: `store_image_from_url`
 - inputSchema
-  - image_url: string (required)
-  - filename?: string
-  - tags?: string[]
-  - fetch_headers?: object (必要なら認証ヘッダー等)
-- 出力 content
-  - application/json: {
-      image_token: string,
-      resource_uri: string,
-      mime_type: string,
-      created_at: string,
-      metadata: object,
-      download_url?: string
-    }
+  - `image_url`（必須）
+  - `source?`
+  - `prompt?`
+  - `negative_prompt?`
+  - `parameters?`
+  - `derived_from?`
+  - `tags?`
+  - `extra?`
+  - `filename?`
+  - `timeout?`
+  - `max_bytes?`
 
-保存
-- Job API のレスポンスに base64 が含まれる場合は `saveImage()` で保存、含まれない場合は download_url を用いてダウンロード→保存（既存の token 取得処理を流用）。
+処理フロー
+1. URL バリデーション（http/https のみ）。
+2. POST `/images/store-from-url` を呼び `image_token` を取得。
+3. GET `/images/{image_token}` で base64 が得られる場合はそのまま `saveImage()`。base64 が無い場合は `download_url` を利用して取得後に保存。
+4. 保存時に `metadata.source` や `parameters` を記録。
+
+出力 content
+- application/json: {
+    image_token,
+    resource_uri,
+    mime_type,
+    created_at,
+    metadata,
+    download_url?
+  }
 
 検証
-- URL のスキームは http/https のみ許可
-- 画像サイズが大きい場合のダウンロードタイムアウトを延長（環境変数で調整）
+- URL が http/https 以外 → `InvalidRequest`
+- `timeout` が負数 → `InvalidRequest`
+- `max_bytes` が 0 以下 → `InvalidRequest`
+
+テスト
+- 正常系: 公開 PNG URL
+- 大容量 URL で `max_bytes` を下回ることを確認
+- タグや derived_from を指定したレスポンスで metadata が保存される
 
 ---
 
