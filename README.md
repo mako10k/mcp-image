@@ -49,7 +49,7 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 4. Configure your JOB API server URL by exporting environment variables:
 
 	 ```bash
-	 export MODAL_JOB_API_URL="https://your-deployment--ai-image-jobapi-serve.modal.run"
+	 export MODAL_JOB_API_URL="https://your-deployment--modal-image-jobapi-serve.modal.run"
 	 export JOBAPI_API_KEY="your-api-key-here"
 	 ```
 
@@ -72,7 +72,7 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 				 "command": "node",
 				 "args": ["/path/to/mcp-image/dist/index.js"],
 				 "env": {
-					 "MODAL_JOB_API_URL": "https://your-deployment--ai-image-jobapi-serve.modal.run",
+					 "MODAL_JOB_API_URL": "https://your-deployment--modal-image-jobapi-serve.modal.run",
 					 "JOBAPI_API_KEY": "your-api-key-here"
 				 }
 			 }
@@ -91,7 +91,7 @@ The server connects to a JOB API server for **all operations** including image g
 
 Example:
 ```bash
-export MODAL_JOB_API_URL=https://your-deployment--ai-image-jobapi-serve.modal.run
+export MODAL_JOB_API_URL=https://your-deployment--modal-image-jobapi-serve.modal.run
 export JOBAPI_API_KEY=your-api-key-here
 ```
 
