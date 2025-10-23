@@ -57,10 +57,13 @@ test('readResource returns schema-friendly payload with blob and text entries', 
     assert.ok(typeof blobEntry.blob === 'string' && (blobEntry.blob as string).length > 0);
     assert.equal(blobEntry.downloadUrl, 'https://example.com/test.png');
 
-    assert.equal(textEntry.uri, resourceUri);
-    assert.equal(textEntry.mimeType, 'text/plain');
-    assert.ok(typeof textEntry.text === 'string');
-    assert.match(textEntry.text as string, /Image Token: test-token-123/);
+  assert.equal(textEntry.uri, resourceUri);
+  assert.equal(textEntry.mimeType, 'application/json');
+  assert.ok(typeof textEntry.text === 'string');
+  const meta = JSON.parse(textEntry.text as string);
+  assert.equal(meta.image_token, 'test-token-123');
+  assert.equal(meta.model, 'unit-test-model');
+  assert.equal(meta.prompt, 'unit test prompt');
   } finally {
     delete process.env.AI_IMAGE_API_MCP_STORAGE_ROOT;
     await fs.rm(tmpRoot, { recursive: true, force: true });

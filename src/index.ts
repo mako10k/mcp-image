@@ -39,7 +39,7 @@ export class AiImageMcpServer {
     this.server = new Server(
       {
         name: 'ai-image-api-mcp-server',
-  version: '1.0.3',
+        version: '1.0.3',
       },
       {
         capabilities: {
@@ -287,7 +287,7 @@ export class AiImageMcpServer {
         if (error instanceof McpError) {
           throw error;
         }
-        
+
         console.error(`Error in tool ${name}:`, error);
         throw new McpError(
           ErrorCode.InternalError,
@@ -430,8 +430,15 @@ export class AiImageMcpServer {
         primaryContent,
         {
           uri,
-          mimeType: 'text/plain',
-          text: textLines.join('\n'),
+          mimeType: 'application/json',
+          text: JSON.stringify({
+            created_at: record.createdAt,
+            model: record.model,
+            prompt: record.prompt,
+            image_token: record.imageToken,
+            download_url: record.downloadUrl,
+            metadata: record.metadata,
+          }),
         },
       ],
     };
@@ -508,42 +515,27 @@ export class AiImageMcpServer {
 
     const limited = images.slice(0, normalizedLimit);
 
-    if (limited.length === 0) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'No images matched the specified filters.',
-          },
-        ],
-      };
-    }
-
-    const lines = limited.map((record, index) => {
-      const timestamp = new Date(record.createdAt).toLocaleString();
-      const preview = record.prompt.length > 120 ? `${record.prompt.slice(0, 117)}...` : record.prompt;
-      return [
-        `${index + 1}. ${timestamp} | ${record.model}`,
-        `   Prompt: ${preview}`,
-        `   URI: ${getResourceUri(record.id)}`,
-      ].join('\n');
-    });
-
-    const truncated = images.length > limited.length;
-    const header = 'Results are served from the locally cached image metadata. The Modal AI Image API does not expose search endpoints, so this uses local metadata only.';
-
-    const summary = [
-      header,
-      '',
-      ...lines,
-      truncated ? 'Note: More matches exist beyond the requested limit; only the first results are shown.' : '',
-    ].filter(Boolean).join('\n');
+    const results = limited.map((record) => ({
+      id: record.id,
+      resource_uri: getResourceUri(record.id),
+      created_at: record.createdAt,
+      model: record.model,
+      prompt: record.prompt,
+      mime_type: record.mimeType ?? 'image/png',
+      image_token: record.imageToken,
+      download_url: record.downloadUrl,
+      metadata: record.metadata,
+    }));
 
     return {
       content: [
         {
           type: 'text',
-          text: summary,
+          text: JSON.stringify({
+            total_matches: images.length,
+            returned: results.length,
+            results,
+          }),
         },
       ],
     };
@@ -605,32 +597,10 @@ export class AiImageMcpServer {
       responseData.image_base64 = base64;
     }
 
-    const textSummary = [
-      `Image Token: ${record.imageToken}`,
-      `Resource URI: ${resourceUri}`,
-      `Prompt: ${record.prompt}`,
-      `Model: ${record.model}`,
-      `Created: ${record.createdAt}`,
-    ];
-
-    if (record.downloadUrl) {
-      textSummary.push(`Download URL: ${record.downloadUrl}`);
-    }
-
-    if (record.metadata) {
-      const metaSnippet = JSON.stringify(record.metadata).slice(0, 300);
-      textSummary.push(`Metadata (truncated): ${metaSnippet}`);
-    }
-
-    const content: Array<Record<string, unknown>> = [
-      {
-        type: 'text',
-        text: JSON.stringify(responseData, null, 2),
-      },
-    ];
+    const content: Array<Record<string, unknown>> = [];
 
     if (base64 && base64.length > 0) {
-      content.unshift({
+      content.push({
         type: 'image',
         data: base64,
         mimeType,
@@ -639,7 +609,7 @@ export class AiImageMcpServer {
 
     content.push({
       type: 'text',
-      text: textSummary.join('\n'),
+      text: JSON.stringify(responseData),
     });
 
     return { content };
@@ -781,7 +751,7 @@ export class AiImageMcpServer {
     sanitized.include_base64 = true;
     sanitized.include_metadata = true;
 
-    console.log(`[AI Image] Generating image via Modal | model=${sanitized.model ?? 'default'} prompt="${promptValue}"`);
+    console.error(`[AI Image] Generating image via Modal | model=${sanitized.model ?? 'default'} prompt="${promptValue}"`);
 
     const response = await this.getApiClient().generateImage(sanitized);
     const usedParamsRecord = (response.used_params ?? {}) as Record<string, unknown>;
@@ -884,6 +854,18 @@ export class AiImageMcpServer {
       summaryParts.push('', ...truncationNotices.map((notice) => `Note: ${notice}`));
     }
 
+    const jsonPayload = {
+      image_token: response.image_token,
+      resource_uri: resourceUri,
+      mime_type: record.mimeType ?? 'image/png',
+      download_url: response.download_url,
+      prompt: record.prompt,
+      model: record.model,
+      created_at: record.createdAt,
+      used_params: usedParamsRecord,
+      metadata: metadataRecord,
+    };
+
     return {
       content: [
         {
@@ -893,7 +875,7 @@ export class AiImageMcpServer {
         },
         {
           type: 'text',
-          text: summaryParts.join('\n'),
+          text: JSON.stringify(jsonPayload),
         },
       ],
     };
@@ -903,19 +885,15 @@ export class AiImageMcpServer {
    * Retrieve the list of available models
    */
   private async handleGetAvailableModels() {
-    console.log('[AI Image] Fetching available models');
-    
-    const result = await this.getApiClient().getModels();
+    console.error('[AI Image] Fetching available models');
 
-    const modelsList = Object.entries(result.models).map(([name, config]) => 
-      `- **${name}**: ${config.repo} - ${config.description}`
-    ).join('\n');
+    const result = await this.getApiClient().getModels();
 
     return {
       content: [
         {
           type: 'text',
-          text: `Available image generation models:\n\n${modelsList}\n\nTotal models available: ${Object.keys(result.models).length}.`,
+          text: JSON.stringify(result),
         },
       ],
     };
@@ -926,35 +904,16 @@ export class AiImageMcpServer {
    */
   private async handleGetModelDetail(params: { model_name: string }) {
     const { model_name } = params;
-    
-    console.log(`[AI Image] Fetching model detail for: ${model_name}`);
-    
-    const result = await this.getApiClient().getModelDetail(model_name);
-    const model = result.model;
 
-    const details = [
-      `**Model name:** ${model_name}`,
-      `**Repository:** ${model.repo}`,
-      `**Description:** ${model.description}`,
-      `**Recommended scheduler:** ${model.recommended_scheduler}`,
-      `**Recommended guidance scale:** ${model.recommended_guidance_scale}`,
-      `**Prompt limit:** ${model.prompt_token_limit} tokens`,
-      '',
-      `**Recommended prompt:**`,
-      model.recommended_prompt,
-      '',
-      `**Recommended negative prompt:**`,
-      model.recommended_negative_prompt,
-      '',
-      `**Parameter guidelines:**`,
-      model.recommended_parameter_guideline,
-    ];
+    console.error(`[AI Image] Fetching model detail for: ${model_name}`);
+
+    const result = await this.getApiClient().getModelDetail(model_name);
 
     return {
       content: [
         {
           type: 'text',
-          text: details.join('\n'),
+          text: JSON.stringify(result),
         },
       ],
     };
@@ -1039,7 +998,7 @@ export class AiImageMcpServer {
     const directModelValue = normalizeModelValue(params.model);
     const selectedModel = targetModelValue ?? directModelValue;
 
-    console.log('[AI Image] Optimizing prompt: "%s" model=%s', queryValue, selectedModel ?? 'auto');
+    console.error('[AI Image] Optimizing prompt: "%s" model=%s', queryValue, selectedModel ?? 'auto');
 
     const optimizeRequest: OptimizeParametersRequest = selectedModel
       ? { query: queryValue, model: selectedModel }
@@ -1082,8 +1041,8 @@ export class AiImageMcpServer {
 
     const optimizeModel = targetModelValue ?? directModelValue;
 
-    console.log('[AI Image] Optimize & Generate | query="%s" model=%s', queryValue, optimizeModel ?? 'auto');
-    console.log('[AI Image] Note: This process involves two steps (optimization + generation) and may take up to 15 minutes total, especially on first connection to JOBAPI server');
+    console.error('[AI Image] Optimize & Generate | query="%s" model=%s', queryValue, optimizeModel ?? 'auto');
+    console.error('[AI Image] Note: This process involves two steps (optimization + generation) and may take up to 15 minutes total, especially on first connection to JOBAPI server');
 
     const optimizeRequest: OptimizeParametersRequest = optimizeModel
       ? { query: queryValue, model: optimizeModel }
@@ -1153,7 +1112,7 @@ export class AiImageMcpServer {
 
     const generationParamsSnapshot = JSON.parse(JSON.stringify(generationParams)) as Txt2ImgRequest;
 
-    console.log('[AI Image] Optimization complete, now generating image with optimized parameters...');
+    console.error('[AI Image] Optimization complete, now generating image with optimized parameters...');
     const generationResult = await this.handleGenerateImage(generationParams);
 
     const combinedContent = [

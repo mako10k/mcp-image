@@ -72,17 +72,20 @@ test('handleGetImageByToken returns expected payload', async () => {
 
     const response = await (server as any).handleGetImageByToken({ image_token: testToken });
 
-    assert.ok(Array.isArray(response.content), 'content should be an array');
-    assert.ok(response.content.length >= 2, 'content should include image and text entries');
+  assert.ok(Array.isArray(response.content), 'content should be an array');
+  assert.ok(response.content.length >= 1, 'content should include at least image or JSON entry');
 
-    const imageEntry = response.content.find((c: any) => c.type === 'image');
+  const imageEntry = response.content.find((c: any) => c.type === 'image');
     assert.ok(imageEntry, 'should include image entry');
     assert.equal(imageEntry.mimeType, 'image/png');
     assert.ok(typeof imageEntry.data === 'string' && imageEntry.data.length > 0);
 
-    const textEntry = response.content.find((c: any) => c.type === 'text' && c.text.includes('Image Token'));
-    assert.ok(textEntry, 'should include summary text entry');
-    assert.match(textEntry.text, new RegExp(testToken));
+  const jsonEntry = response.content.find((c: any) => c.type === 'text');
+  assert.ok(jsonEntry, 'should include JSON text entry');
+  const payload = JSON.parse(jsonEntry.text);
+  assert.equal(payload.image_token, testToken);
+  assert.equal(payload.model, 'handler-model');
+  assert.equal(payload.prompt, 'handler token test');
 
   } finally {
     delete process.env.AI_IMAGE_API_MCP_STORAGE_ROOT;
