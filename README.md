@@ -13,6 +13,36 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 - **Modal API pass-through**: Forward MCP tool inputs directly to the Modal API payload.
 - **Resource management**: Cache generated images locally and expose them as MCP resources.
 
+## I/O とログ方針（JSON-only）
+
+このサーバは Model Context Protocol (MCP) の JSON-RPC を厳密に守るため、以下の方針で入出力を統一しています。
+
+- stdout: MCP の JSON-RPC メッセージ専用。人間向けのログやメッセージは一切出しません。
+- stderr: すべてのログを出力（起動メッセージ、バックエンド呼び出しの状況など）。
+- ツール応答: JSON のみを返します。必要に応じて画像などのバイナリはメディアコンテンツ（image/png 等）として併送され、text/plain のサマリーは返しません。
+
+最小例（generate_image の概念スケルトン）:
+
+```jsonc
+{
+	"content": [
+		// 画像本体（MCP のバイナリ/画像コンテンツ）
+		{ "type": "image", "mime_type": "image/png", "data": "<base64>" },
+
+		// 付随メタデータ（application/json）
+		{ "type": "application/json", "json": {
+				"image_token": "...",
+				"resource_uri": "resource://ai-image-api/image/<uuid>",
+				"mime_type": "image/png",
+				"used_params": { "model": "...", "width": 768, "height": 512, "steps": 20, "guidance_scale": 7.5 },
+				"metadata": { "width": 768, "height": 512, "size_bytes": 658542 }
+		}}
+	]
+}
+```
+
+この方針により、クライアント側でのパースが安定し、stdout に混在出力が混ざることによる JSON-RPC 破損を防ぎます。
+
 ## Setup
 
 1. Install dependencies:
