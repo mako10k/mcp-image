@@ -8,6 +8,7 @@
 
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import axios from 'axios';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -19,7 +20,25 @@ import {
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AiImageApiClient } from './client.js';
-import { ImageGenerationParams, ImageSearchParams, OptimizeAndGenerateRequest, OptimizeParametersRequest, Txt2ImgRequest } from './types.js';
+import {
+  ImageGenerationParams,
+  ImageSearchParams,
+  OptimizeAndGenerateRequest,
+  OptimizeParametersRequest,
+  Txt2ImgRequest,
+  ImageCaptionRequest,
+  ImageCaptionResponse,
+  UpscaleRequest,
+  UpscaleJobStatusResponse,
+  JobResultResponse,
+  ImageToImageJobRequest,
+  ImageToImageJobResponse,
+  ImageToImageJobCreationResponse,
+  ImageUrlUploadRequest,
+  ImageUploadResponse,
+  ImageMetadataPatch,
+  ImageUploadRequest,
+} from './types.js';
 import {
   saveImage,
   listImages,
@@ -28,7 +47,21 @@ import {
   readImageBase64,
   getResourceUri,
   RESOURCE_URI_PREFIX,
+  ImageRecord,
 } from './storage.js';
+
+interface ImageReferenceInput {
+  resource_uri?: unknown;
+  image_token?: unknown;
+  image_base64?: unknown;
+}
+
+interface ResolvedImageReference {
+  imageToken?: string;
+  record?: ImageRecord;
+  directBase64?: string;
+  source: 'resource_uri' | 'image_token' | 'image_base64';
+}
 
 export class AiImageMcpServer {
   private server: Server;
@@ -246,6 +279,259 @@ export class AiImageMcpServer {
               required: ['image_token'],
             },
           },
+          {
+            name: 'caption_image',
+            description: 'Generate a natural language caption describing an existing image.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                resource_uri: {
+                  type: 'string',
+                  description: 'Resource URI referencing a cached image.'
+                },
+                image_token: {
+                  type: 'string',
+                  description: 'Existing Modal image token to caption.'
+                },
+                image_base64: {
+                  type: 'string',
+                  description: 'Base64-encoded image data (PNG/JPEG).'
+                },
+                image_url: {
+                  type: 'string',
+                  description: 'Direct image URL. Use store_image_from_url first if possible.'
+                },
+                prompt: {
+                  type: 'string',
+                  description: 'Optional additional prompt passed to the captioning model.'
+                },
+                max_new_tokens: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 512,
+                  description: 'Maximum caption length in tokens.'
+                },
+                temperature: {
+                  type: 'number',
+                  minimum: 0,
+                  maximum: 2,
+                  description: 'Sampling temperature.'
+                },
+                top_p: {
+                  type: 'number',
+                  minimum: 0,
+                  maximum: 1,
+                  description: 'Nucleus sampling top-p parameter.'
+                },
+                use_nucleus_sampling: {
+                  type: 'boolean',
+                  description: 'Whether to enable nucleus sampling.'
+                },
+                repetition_penalty: {
+                  type: 'number',
+                  minimum: 0.5,
+                  maximum: 2,
+                  description: 'Penalty applied to repeated tokens.'
+                },
+                model_id: {
+                  type: 'string',
+                  description: 'Specific captioning model ID to use.'
+                },
+                store_to_metadata: {
+                  type: 'boolean',
+                  description: 'If true, persist the caption into the Modal image metadata when possible.'
+                }
+              },
+              additionalProperties: false,
+            },
+          },
+          {
+            name: 'upscale_image',
+            description: 'Upscale an existing image using Modal’s upscale endpoint and return the higher-resolution result.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                resource_uri: {
+                  type: 'string',
+                  description: 'Resource URI referencing a cached image to upscale.'
+                },
+                image_token: {
+                  type: 'string',
+                  description: 'Modal image token to upscale.'
+                },
+                image_base64: {
+                  type: 'string',
+                  description: 'Base64-encoded image data. The server will upload this before upscaling.'
+                },
+                scale: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 8,
+                  description: 'Integer upscale factor (1-8).'
+                },
+                poll_timeout_seconds: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 1800,
+                  description: 'Maximum seconds to wait for the upscale job to finish (default 300).'
+                },
+                poll_interval_seconds: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 60,
+                  description: 'Polling interval in seconds while waiting for the job (default 5).'
+                }
+              },
+              additionalProperties: false,
+            },
+          },
+          {
+            name: 'image_to_image',
+            description: 'Generate a new image from an existing source image (img2img).',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                resource_uri: {
+                  type: 'string',
+                  description: 'Resource URI referencing the source image.'
+                },
+                image_token: {
+                  type: 'string',
+                  description: 'Existing Modal image token for the source image.'
+                },
+                image_base64: {
+                  type: 'string',
+                  description: 'Base64-encoded source image. The server uploads this to obtain a token if needed.'
+                },
+                prompt: {
+                  type: 'string',
+                  description: 'Primary text prompt guiding the generation.'
+                },
+                negative_prompt: {
+                  type: 'string',
+                  description: 'Negative prompt to suppress concepts.'
+                },
+                model: {
+                  type: 'string',
+                  description: 'Model identifier (defaults to sd21).'
+                },
+                guidance_scale: {
+                  type: 'number',
+                  description: 'Classifier-free guidance scale.'
+                },
+                steps: {
+                  type: 'integer',
+                  minimum: 1,
+                  description: 'Diffusion steps (default 20).'
+                },
+                width: {
+                  type: 'integer',
+                  minimum: 256,
+                  maximum: 2048,
+                  multipleOf: 64,
+                  description: 'Output width in pixels (multiple of 64).'
+                },
+                height: {
+                  type: 'integer',
+                  minimum: 256,
+                  maximum: 2048,
+                  multipleOf: 64,
+                  description: 'Output height in pixels (multiple of 64).'
+                },
+                seed: {
+                  type: 'integer',
+                  description: 'Random seed for deterministic results.'
+                },
+                strength: {
+                  type: 'number',
+                  minimum: 0,
+                  maximum: 1,
+                  description: 'Blend strength between source image and prompt (default 0.7).'
+                },
+                include_base64: {
+                  type: 'boolean',
+                  description: 'Whether to request base64 output directly from the sync endpoint (default true).'
+                },
+                async: {
+                  type: 'boolean',
+                  description: 'If true, enqueue the job and return job info instead of waiting.'
+                },
+                poll_timeout_seconds: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 1800,
+                  description: 'Maximum seconds to wait for async job completion when polling (default 600).'
+                },
+                poll_interval_seconds: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 60,
+                  description: 'Polling interval when async job polling is used (default 5).'
+                }
+              },
+              required: ['prompt'],
+              additionalProperties: false,
+            },
+          },
+          {
+            name: 'store_image_from_url',
+            description: 'Fetch an image from a public URL, register it with Modal, and cache it locally.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                image_url: {
+                  type: 'string',
+                  description: 'Public HTTP/HTTPS URL of the image to import.'
+                },
+                source: {
+                  type: 'string',
+                  description: 'Source identifier stored alongside the image metadata.'
+                },
+                prompt: {
+                  type: 'string',
+                  description: 'Optional prompt metadata to attach to the stored image.'
+                },
+                negative_prompt: {
+                  type: 'string',
+                  description: 'Optional negative prompt metadata.'
+                },
+                parameters: {
+                  type: 'object',
+                  description: 'Arbitrary parameter metadata to store.'
+                },
+                derived_from: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'List of source image tokens this image derives from.'
+                },
+                tags: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Tags to store alongside the image.'
+                },
+                extra: {
+                  type: 'object',
+                  description: 'Additional metadata payload.'
+                },
+                filename: {
+                  type: 'string',
+                  description: 'Filename hint when storing the image.'
+                },
+                timeout: {
+                  type: 'number',
+                  minimum: 0,
+                  description: 'Timeout in seconds for downloading the image.'
+                },
+                max_bytes: {
+                  type: 'integer',
+                  minimum: 1,
+                  description: 'Maximum download size in bytes.'
+                }
+              },
+              required: ['image_url'],
+              additionalProperties: false,
+            },
+          },
         ],
       };
     });
@@ -276,6 +562,18 @@ export class AiImageMcpServer {
 
           case 'get_image_by_token':
             return await this.handleGetImageByToken(args as unknown as { image_token: string });
+
+          case 'caption_image':
+            return await this.handleCaptionImage(args as Record<string, unknown>);
+
+          case 'upscale_image':
+            return await this.handleUpscaleImage(args as Record<string, unknown>);
+
+          case 'image_to_image':
+            return await this.handleImageToImage(args as Record<string, unknown>);
+
+          case 'store_image_from_url':
+            return await this.handleStoreImageFromUrl(args as Record<string, unknown>);
 
           default:
             throw new McpError(
@@ -1128,6 +1426,925 @@ export class AiImageMcpServer {
 
     return {
       content: combinedContent,
+    };
+  }
+
+  private sanitizeOptionalString(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private parseOptionalNumber(
+    value: unknown,
+    field: string,
+    options?: { min?: number; max?: number }
+  ): number | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric)) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must be a finite number.`);
+    }
+
+    if (options?.min !== undefined && numeric < options.min) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must be at least ${options.min}.`);
+    }
+
+    if (options?.max !== undefined && numeric > options.max) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must not exceed ${options.max}.`);
+    }
+
+    return numeric;
+  }
+
+  private parseOptionalInteger(
+    value: unknown,
+    field: string,
+    options?: { min?: number; max?: number }
+  ): number | undefined {
+    const numeric = this.parseOptionalNumber(value, field, options);
+    if (numeric === undefined) {
+      return undefined;
+    }
+
+    if (!Number.isInteger(numeric)) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must be an integer.`);
+    }
+
+    return numeric;
+  }
+
+  private parseOptionalDimension(value: unknown, field: 'width' | 'height'): number | undefined {
+    const numeric = this.parseOptionalInteger(value, field, { min: 256, max: 2048 });
+    if (numeric === undefined) {
+      return undefined;
+    }
+    if (numeric % 64 !== 0) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must be a multiple of 64.`);
+    }
+    return numeric;
+  }
+
+  private parseOptionalBoolean(value: unknown, field: string): boolean | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') {
+        return true;
+      }
+      if (normalized === 'false') {
+        return false;
+      }
+    }
+    throw new McpError(ErrorCode.InvalidRequest, `${field} must be a boolean.`);
+  }
+
+  private parseOptionalStringArray(value: unknown, field: string): string[] | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    if (!Array.isArray(value)) {
+      throw new McpError(ErrorCode.InvalidRequest, `${field} must be an array of strings.`);
+    }
+    const sanitized = value.map((entry, index) => {
+      if (typeof entry !== 'string') {
+        throw new McpError(ErrorCode.InvalidRequest, `${field}[${index}] must be a string.`);
+      }
+      const trimmed = entry.trim();
+      if (trimmed.length === 0) {
+        throw new McpError(ErrorCode.InvalidRequest, `${field}[${index}] must be a non-empty string.`);
+      }
+      return trimmed;
+    });
+    return sanitized;
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private async resolveImageReference(input: ImageReferenceInput): Promise<ResolvedImageReference> {
+    const resourceUri = this.sanitizeOptionalString(input.resource_uri);
+    if (resourceUri) {
+      const record = await getImageRecord(this.extractResourceId(resourceUri));
+      if (!record) {
+        throw new McpError(ErrorCode.InvalidRequest, `Resource not found: ${resourceUri}`);
+      }
+      const tokenFromRecord = this.sanitizeOptionalString(record.imageToken);
+      return {
+        imageToken: tokenFromRecord,
+        record,
+        source: 'resource_uri',
+      };
+    }
+
+    const imageToken = this.sanitizeOptionalString(input.image_token);
+    if (imageToken) {
+      const record = await getImageRecordByToken(imageToken);
+      return {
+        imageToken,
+        record: record ?? undefined,
+        source: 'image_token',
+      };
+    }
+
+    const imageBase64 = this.sanitizeOptionalString(input.image_base64);
+    if (imageBase64) {
+      return {
+        directBase64: imageBase64,
+        source: 'image_base64',
+      };
+    }
+
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      'Provide at least one of resource_uri, image_token, or image_base64.'
+    );
+  }
+
+  private async readRecordBase64(record: ImageRecord): Promise<string | undefined> {
+    try {
+      return await readImageBase64(record);
+    } catch (error) {
+      console.warn('[AI Image] Failed to read cached image binary for record', {
+        id: record.id,
+        err: error instanceof Error ? error.message : error,
+      });
+      return undefined;
+    }
+  }
+
+  private async ensureImageToken(
+    reference: ResolvedImageReference,
+    options?: {
+      uploadIfNeeded?: boolean;
+      uploadSource?: string;
+      derivedFrom?: string[];
+      prompt?: string;
+    }
+  ): Promise<{ imageToken: string; record?: ImageRecord }> {
+    if (reference.imageToken) {
+      return { imageToken: reference.imageToken, record: reference.record };
+    }
+
+    if (!options?.uploadIfNeeded) {
+      throw new McpError(ErrorCode.InvalidRequest, 'image_token is required for this operation.');
+    }
+
+    let base64: string | undefined = reference.directBase64;
+    if (!base64 && reference.record) {
+      base64 = await this.readRecordBase64(reference.record);
+    }
+
+    if (!base64) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Unable to resolve base64 image data. Provide image_base64 explicitly or reference a cached resource.'
+      );
+    }
+
+    const client = this.getApiClient();
+    const uploadRequest: ImageUploadRequest = {
+      image_base64: base64,
+      source: options?.uploadSource ?? 'mcp-upload',
+      derived_from: options?.derivedFrom,
+      prompt: options?.prompt,
+    };
+
+    const uploadResponse = await client.uploadImage(uploadRequest);
+    return {
+      imageToken: uploadResponse.image_token,
+      record: reference.record,
+    };
+  }
+
+  private async fetchImageBase64(imageToken: string): Promise<string | undefined> {
+    try {
+      const lookup = await this.getApiClient().getImageByToken(imageToken);
+      const base64 = this.sanitizeOptionalString(lookup.image_base64);
+      return base64;
+    } catch (error) {
+      console.warn('[AI Image] Failed to download base64 for image token', {
+        imageToken,
+        err: error instanceof Error ? error.message : error,
+      });
+      return undefined;
+    }
+  }
+
+  private pruneUndefined<T extends Record<string, unknown>>(input: T): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (value !== undefined) {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  private async waitForJobResult(
+    jobId: string,
+    options: {
+      includeBase64?: boolean;
+      pollIntervalSeconds?: number;
+      timeoutSeconds?: number;
+    }
+  ): Promise<JobResultResponse> {
+    const includeBase64 = options.includeBase64 ?? false;
+    const pollIntervalMs = Math.max(1, options.pollIntervalSeconds ?? 5) * 1000;
+    const timeoutMs = Math.max(1, options.timeoutSeconds ?? 300) * 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    let lastStatus: string | undefined;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.getApiClient().getJobResult(jobId, includeBase64);
+        const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
+
+        if (status === 'succeeded' || status === 'completed') {
+          return result;
+        }
+
+        if (status === 'failed' || status === 'error' || status === 'cancelled') {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Job ${jobId} failed: ${result.error ?? 'Unknown error'}`
+          );
+        }
+
+        lastStatus = status;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/404|not found|not ready/i.test(message)) {
+          console.warn('[AI Image] Job result polling error', { jobId, err: message });
+        }
+      }
+
+      await this.delay(pollIntervalMs);
+    }
+
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Job ${jobId} did not complete within ${options.timeoutSeconds ?? 300} seconds (last status: ${lastStatus ?? 'unknown'}).`
+    );
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private async downloadImageToBase64(
+    url: string,
+    options: { timeoutSeconds?: number; maxBytes?: number } = {}
+  ): Promise<{ base64: string; mimeType: string; byteLength: number }> {
+    const timeoutSeconds = options.timeoutSeconds ?? 30;
+    const timeoutMs = Math.max(1000, Math.floor(timeoutSeconds * 1000));
+    const maxBytes = options.maxBytes ?? 20 * 1024 * 1024; // default 20MB safeguard
+
+    try {
+      const response = await axios.get<ArrayBuffer>(url, {
+        responseType: 'arraybuffer',
+        timeout: timeoutMs,
+        maxContentLength: maxBytes,
+        maxBodyLength: maxBytes,
+        validateStatus: (status) => typeof status === 'number' && status >= 200 && status < 300,
+      });
+
+      const buffer = Buffer.from(response.data);
+      if (buffer.length > maxBytes) {
+        throw new Error(`Downloaded image exceeds max_bytes (${maxBytes} bytes). Actual size: ${buffer.length} bytes.`);
+      }
+
+      const rawContentType = response.headers['content-type'];
+      const contentType = Array.isArray(rawContentType)
+        ? rawContentType[0]
+        : (typeof rawContentType === 'string' ? rawContentType : 'application/octet-stream');
+      const mimeType = contentType.split(';')[0].trim() || 'application/octet-stream';
+
+      return {
+        base64: buffer.toString('base64'),
+        mimeType,
+        byteLength: buffer.length,
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          throw new Error(`Timed out fetching image after ${timeoutMs}ms.`);
+        }
+        const status = error.response?.status;
+        const statusText = error.response?.statusText?.trim();
+        const detail = error.response?.data && typeof error.response.data === 'object'
+          ? JSON.stringify(error.response.data)
+          : undefined;
+        const parts = [
+          `Failed to download image (${status ?? 'no-status'}${statusText ? ` ${statusText}` : ''}).`,
+          error.message,
+          detail,
+        ].filter(Boolean);
+        throw new Error(parts.join(' '));
+      }
+
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  private async handleCaptionImage(params: Record<string, unknown>) {
+    const imageUrl = this.sanitizeOptionalString(params.image_url);
+    if (imageUrl) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'image_url is not supported directly. Use store_image_from_url first to register the image.'
+      );
+    }
+
+    const reference = await this.resolveImageReference(params);
+    const request: ImageCaptionRequest = {};
+
+    if (reference.imageToken) {
+      request.image_token = reference.imageToken;
+    } else {
+      let base64 = reference.directBase64;
+      if (!base64 && reference.record) {
+        base64 = await this.readRecordBase64(reference.record);
+      }
+      if (!base64) {
+        throw new McpError(ErrorCode.InvalidRequest, 'image_base64 is required when image_token is unavailable.');
+      }
+      request.image_base64 = base64;
+    }
+
+    const prompt = this.sanitizeOptionalString(params.prompt);
+    if (prompt) {
+      request.prompt = prompt;
+    }
+
+    const maxNewTokens = this.parseOptionalInteger(params.max_new_tokens, 'max_new_tokens', { min: 1, max: 512 });
+    if (maxNewTokens !== undefined) {
+      request.max_new_tokens = maxNewTokens;
+    }
+
+    const temperature = this.parseOptionalNumber(params.temperature, 'temperature', { min: 0, max: 2 });
+    if (temperature !== undefined) {
+      request.temperature = temperature;
+    }
+
+    const topP = this.parseOptionalNumber(params.top_p, 'top_p', { min: 0, max: 1 });
+    if (topP !== undefined) {
+      request.top_p = topP;
+    }
+
+    const nucleus = this.parseOptionalBoolean(params.use_nucleus_sampling, 'use_nucleus_sampling');
+    if (nucleus !== undefined) {
+      request.use_nucleus_sampling = nucleus;
+    }
+
+    const repetitionPenalty = this.parseOptionalNumber(params.repetition_penalty, 'repetition_penalty', { min: 0.5, max: 2 });
+    if (repetitionPenalty !== undefined) {
+      request.repetition_penalty = repetitionPenalty;
+    }
+
+    const modelId = this.sanitizeOptionalString(params.model_id);
+    if (modelId) {
+      request.model_id = modelId;
+    }
+
+    console.error('[AI Image] Captioning image via Modal');
+    const response = await this.getApiClient().captionImage(request);
+
+    const storeToMetadata = this.parseOptionalBoolean(params.store_to_metadata, 'store_to_metadata') === true;
+    let storedToMetadata = false;
+
+    if (storeToMetadata) {
+      const tokenToPatch = this.sanitizeOptionalString(response.image_token) ?? reference.imageToken;
+      if (!tokenToPatch) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          'store_to_metadata requires a resolvable image_token. Caption response did not include one.'
+        );
+      }
+
+      const patch: ImageMetadataPatch = {
+        caption: response.caption,
+        caption_model_id: response.model_id,
+        captioned_at: Math.floor(Date.now() / 1000),
+      };
+
+      await this.getApiClient().patchImageMetadata(tokenToPatch, patch);
+      storedToMetadata = true;
+    }
+
+    const resourceUri = reference.record ? getResourceUri(reference.record.id) : undefined;
+
+    const payload = this.pruneUndefined({
+      caption: response.caption,
+      model_id: response.model_id,
+      device: response.device,
+      dtype: response.dtype,
+      metadata: response.metadata,
+      image_metadata: response.image_metadata,
+      image_token: response.image_token ?? reference.imageToken,
+      resource_uri: resourceUri,
+      stored_to_metadata: storedToMetadata ? true : undefined,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
+    };
+  }
+
+  private async handleUpscaleImage(params: Record<string, unknown>) {
+    const reference = await this.resolveImageReference(params);
+    const scale = this.parseOptionalInteger(params.scale, 'scale', { min: 1, max: 8 });
+
+    const timeoutSeconds = this.parseOptionalInteger(params.poll_timeout_seconds, 'poll_timeout_seconds', { min: 1, max: 1800 }) ?? 300;
+    const intervalSeconds = this.parseOptionalInteger(params.poll_interval_seconds, 'poll_interval_seconds', { min: 1, max: 60 }) ?? 5;
+
+    const derivedFrom = reference.imageToken ? [reference.imageToken] : undefined;
+    const ensured = await this.ensureImageToken(reference, {
+      uploadIfNeeded: true,
+      uploadSource: 'mcp-upscale-upload',
+      derivedFrom,
+    });
+
+    const request: UpscaleRequest = { image_token: ensured.imageToken };
+    if (scale !== undefined) {
+      request.scale = scale;
+    }
+
+    console.error('[AI Image] Upscaling image via Modal | image_token=%s scale=%s', ensured.imageToken, scale ?? 'default');
+    const job: UpscaleJobStatusResponse = await this.getApiClient().upscaleImage(request);
+
+    const jobId = this.sanitizeOptionalString(job.job_id);
+    if (!jobId) {
+      throw new McpError(ErrorCode.InternalError, 'Upscale API did not return a job_id.');
+    }
+
+    const jobResult = await this.waitForJobResult(jobId, {
+      includeBase64: true,
+      pollIntervalSeconds: intervalSeconds,
+      timeoutSeconds,
+    });
+
+    let base64 = this.sanitizeOptionalString(jobResult.image_base64);
+    if (!base64 && jobResult.image_token) {
+      base64 = await this.fetchImageBase64(jobResult.image_token);
+    }
+    if (!base64) {
+      throw new McpError(ErrorCode.InternalError, 'Upscale job completed but did not provide image_base64.');
+    }
+
+    const originalPrompt = ensured.record?.prompt ?? '[original prompt unavailable]';
+    const metadataRecord = (jobResult.metadata ?? {}) as Record<string, unknown>;
+
+    const savedRecord = await saveImage(base64, {
+      prompt: originalPrompt,
+      model: 'modal-upscale',
+      params: {
+        request,
+        job_result: jobResult,
+      },
+      imageToken: jobResult.image_token,
+      metadata: {
+        ...metadataRecord,
+        upscaled_from: ensured.imageToken,
+        upscale_scale: scale ?? 2,
+      },
+      downloadUrl: undefined,
+      mimeType: 'image/png',
+    });
+
+    const resourceUri = getResourceUri(savedRecord.id);
+
+    const payload = this.pruneUndefined({
+      job_id: jobId,
+      status: jobResult.status,
+      image_token: jobResult.image_token ?? savedRecord.imageToken,
+      resource_uri: resourceUri,
+      mime_type: savedRecord.mimeType ?? 'image/png',
+      created_at: savedRecord.createdAt,
+      metadata: metadataRecord,
+      original_image_token: ensured.imageToken,
+      used_params: { scale: scale ?? 2 },
+    });
+
+    return {
+      content: [
+        {
+          type: 'image',
+          data: base64,
+          mimeType: savedRecord.mimeType ?? 'image/png',
+        },
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
+    };
+  }
+
+  private async handleImageToImage(params: Record<string, unknown>) {
+    const prompt = this.sanitizeOptionalString(params.prompt);
+    if (!prompt) {
+      throw new McpError(ErrorCode.InvalidRequest, '"prompt" is required and must be a non-empty string.');
+    }
+
+    const reference = await this.resolveImageReference(params);
+    const includeBase64 = this.parseOptionalBoolean(params.include_base64, 'include_base64');
+    const asyncMode = this.parseOptionalBoolean(params.async, 'async') ?? false;
+    const timeoutSeconds = this.parseOptionalInteger(params.poll_timeout_seconds, 'poll_timeout_seconds', { min: 1, max: 1800 }) ?? 600;
+    const intervalSeconds = this.parseOptionalInteger(params.poll_interval_seconds, 'poll_interval_seconds', { min: 1, max: 60 }) ?? 5;
+
+    const ensured = await this.ensureImageToken(reference, {
+      uploadIfNeeded: true,
+      uploadSource: 'mcp-image-to-image-upload',
+      derivedFrom: reference.imageToken ? [reference.imageToken] : undefined,
+      prompt,
+    });
+
+    const request: ImageToImageJobRequest = {
+      prompt,
+      init_image_token: ensured.imageToken,
+    };
+
+    const negativePrompt = this.sanitizeOptionalString(params.negative_prompt);
+    if (negativePrompt) {
+      request.negative_prompt = negativePrompt;
+    }
+
+    const modelValue = this.sanitizeOptionalString(params.model);
+    if (modelValue) {
+      request.model = modelValue;
+    }
+
+    const guidanceScale = this.parseOptionalNumber(params.guidance_scale, 'guidance_scale');
+    if (guidanceScale !== undefined) {
+      request.guidance_scale = guidanceScale;
+    }
+
+    const steps = this.parseOptionalInteger(params.steps, 'steps', { min: 1 });
+    if (steps !== undefined) {
+      request.steps = steps;
+    }
+
+    const width = this.parseOptionalDimension(params.width, 'width');
+    if (width !== undefined) {
+      request.width = width;
+    }
+
+    const height = this.parseOptionalDimension(params.height, 'height');
+    if (height !== undefined) {
+      request.height = height;
+    }
+
+    const seed = this.parseOptionalInteger(params.seed, 'seed');
+    if (seed !== undefined) {
+      request.seed = seed;
+    }
+
+    const strength = this.parseOptionalNumber(params.strength, 'strength', { min: 0, max: 1 });
+    if (strength !== undefined) {
+      request.strength = strength;
+    }
+
+    if (asyncMode) {
+      console.error('[AI Image] Enqueuing async image-to-image job via Modal');
+      const jobResponse = await this.getApiClient().createImageToImageJob(request);
+      const jobId = this.sanitizeOptionalString((jobResponse as Record<string, unknown>).job_id);
+      if (!jobId) {
+        throw new McpError(ErrorCode.InternalError, 'Image-to-image job creation did not return a job_id.');
+      }
+
+      const payload = this.pruneUndefined({
+        job_id: jobId,
+        status: (jobResponse as Record<string, unknown>).status ?? 'queued',
+        poll_endpoints: {
+          status: `/jobs/${jobId}/status`,
+          result: `/jobs/${jobId}/result`,
+        },
+        request,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(payload),
+          },
+        ],
+      };
+    }
+
+    console.error('[AI Image] Running synchronous image-to-image via Modal');
+    const response: ImageToImageJobResponse = await this.getApiClient().imageToImage(request, {
+      includeBase64: includeBase64 !== false,
+    });
+
+    let base64 = this.sanitizeOptionalString(response.image_base64);
+    if (!base64 && response.image_token) {
+      base64 = await this.fetchImageBase64(response.image_token);
+    }
+    if (!base64) {
+      throw new McpError(ErrorCode.InternalError, 'Image-to-image response did not include image data.');
+    }
+
+    const metadataRecord = (response.metadata ?? {}) as Record<string, unknown>;
+    const savedRecord = await saveImage(base64, {
+      prompt,
+      model: this.sanitizeOptionalString(response.used_params?.model) ?? request.model ?? 'unknown',
+      params: {
+        request,
+        used_params: response.used_params ?? {},
+      },
+      imageToken: response.image_token,
+      metadata: {
+        ...metadataRecord,
+        source_image_token: ensured.imageToken,
+      },
+      downloadUrl: undefined,
+      mimeType: 'image/png',
+    });
+
+    const resourceUri = getResourceUri(savedRecord.id);
+
+    const payload = this.pruneUndefined({
+      image_token: response.image_token ?? savedRecord.imageToken,
+      resource_uri: resourceUri,
+      prompt,
+      model: savedRecord.model,
+      created_at: savedRecord.createdAt,
+      used_params: response.used_params,
+      metadata: metadataRecord,
+      source_image_token: ensured.imageToken,
+    });
+
+    return {
+      content: [
+        {
+          type: 'image',
+          data: base64,
+          mimeType: savedRecord.mimeType ?? 'image/png',
+        },
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
+    };
+  }
+
+  private async handleStoreImageFromUrl(params: Record<string, unknown>) {
+    const imageUrl = this.sanitizeOptionalString(params.image_url);
+    if (!imageUrl) {
+      throw new McpError(ErrorCode.InvalidRequest, '"image_url" is required and must be a non-empty string.');
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(imageUrl);
+    } catch {
+      throw new McpError(ErrorCode.InvalidRequest, '"image_url" must be a valid HTTP or HTTPS URL.');
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new McpError(ErrorCode.InvalidRequest, 'Only HTTP and HTTPS URLs are supported.');
+    }
+
+    const request: ImageUrlUploadRequest = { url: imageUrl };
+
+    const source = this.sanitizeOptionalString(params.source);
+    if (source) {
+      request.source = source;
+    }
+
+    const prompt = this.sanitizeOptionalString(params.prompt);
+    if (prompt) {
+      request.prompt = prompt;
+    }
+
+    const negativePrompt = this.sanitizeOptionalString(params.negative_prompt);
+    if (negativePrompt) {
+      request.negative_prompt = negativePrompt;
+    }
+
+    let parameters: Record<string, unknown> | undefined;
+    if (this.isPlainObject(params.parameters)) {
+      parameters = params.parameters as Record<string, unknown>;
+      request.parameters = parameters;
+    } else if (params.parameters !== undefined && params.parameters !== null) {
+      throw new McpError(ErrorCode.InvalidRequest, '"parameters" must be an object when provided.');
+    }
+
+    const derivedFrom = this.parseOptionalStringArray(params.derived_from, 'derived_from');
+    if (derivedFrom) {
+      request.derived_from = derivedFrom;
+    }
+
+    const tags = this.parseOptionalStringArray(params.tags, 'tags');
+    if (tags) {
+      request.tags = tags;
+    }
+
+    let extraObject: Record<string, unknown> | undefined;
+    if (this.isPlainObject(params.extra)) {
+      extraObject = params.extra as Record<string, unknown>;
+      request.extra = extraObject;
+    } else if (params.extra !== undefined && params.extra !== null) {
+      throw new McpError(ErrorCode.InvalidRequest, '"extra" must be an object when provided.');
+    }
+
+    const filename = this.sanitizeOptionalString(params.filename);
+    if (filename) {
+      request.filename = filename;
+    }
+
+    const timeout = this.parseOptionalNumber(params.timeout, 'timeout', { min: 0 });
+    if (timeout !== undefined) {
+      request.timeout = timeout;
+    }
+
+    const maxBytes = this.parseOptionalInteger(params.max_bytes, 'max_bytes', { min: 1 });
+    if (maxBytes !== undefined) {
+      request.max_bytes = maxBytes;
+    }
+
+    const fallbackTimeoutSeconds = typeof timeout === 'number' && timeout > 0 ? timeout : undefined;
+    const fallbackMaxBytes = maxBytes;
+
+    console.error('[AI Image] Storing image from URL via Modal | url=%s', imageUrl);
+
+    let storeResponse: ImageUploadResponse | undefined;
+    let finalImageToken: string | undefined;
+    let metadataRecord: Record<string, unknown> | undefined;
+    let base64: string | undefined;
+    let mimeType: string | undefined;
+    let storeError: unknown;
+    let usedFallbackUpload = false;
+
+    try {
+      storeResponse = await this.getApiClient().storeImageFromUrl(request);
+      finalImageToken = this.sanitizeOptionalString(storeResponse.image_token);
+      metadataRecord = storeResponse.metadata ?? {};
+    } catch (error) {
+      storeError = error;
+      console.error('[AI Image] Modal store-from-url failed, attempting fallback', {
+        url: imageUrl,
+        err: error instanceof Error ? error.message : error,
+      });
+    }
+
+    if (finalImageToken) {
+      base64 = await this.fetchImageBase64(finalImageToken);
+      if (!base64) {
+        console.warn('[AI Image] Modal store-from-url succeeded but image_base64 missing; downloading locally', {
+          imageToken: finalImageToken,
+          url: imageUrl,
+        });
+      }
+    }
+
+    if (!base64) {
+      let downloaded;
+      try {
+        downloaded = await this.downloadImageToBase64(imageUrl, {
+          timeoutSeconds: fallbackTimeoutSeconds,
+          maxBytes: fallbackMaxBytes,
+        });
+      } catch (error) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Failed to download image from URL for caching: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+
+      base64 = downloaded.base64;
+      mimeType = downloaded.mimeType;
+
+      if (!finalImageToken) {
+        console.error('[AI Image] Uploading image via base64 fallback');
+        const uploadRequest: ImageUploadRequest = {
+          image_base64: downloaded.base64,
+          source: source ?? 'url-import',
+        };
+
+        if (prompt) {
+          uploadRequest.prompt = prompt;
+        }
+        if (negativePrompt) {
+          uploadRequest.negative_prompt = negativePrompt;
+        }
+        if (parameters) {
+          uploadRequest.parameters = parameters;
+        }
+        if (derivedFrom) {
+          uploadRequest.derived_from = derivedFrom;
+        }
+        if (tags) {
+          uploadRequest.tags = tags;
+        }
+        if (extraObject) {
+          uploadRequest.extra = extraObject;
+        }
+        if (filename) {
+          uploadRequest.filename = filename;
+        }
+
+        let uploadResponse: ImageUploadResponse;
+        try {
+          uploadResponse = await this.getApiClient().uploadImage(uploadRequest);
+        } catch (error) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Fallback upload to Modal failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+
+        finalImageToken = this.sanitizeOptionalString(uploadResponse.image_token);
+        if (!finalImageToken) {
+          throw new McpError(ErrorCode.InternalError, 'Fallback upload response did not include image_token.');
+        }
+
+        metadataRecord = uploadResponse.metadata ?? {};
+        storeResponse = storeResponse ?? uploadResponse;
+        usedFallbackUpload = true;
+      }
+    }
+
+    if (!base64 || !finalImageToken) {
+      const upstreamMessage = storeError instanceof Error ? storeError.message : 'Unknown Modal error';
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Unable to store image from URL. Modal response: ${upstreamMessage}`
+      );
+    }
+
+    const metadataForSave: Record<string, unknown> = {
+      ...(metadataRecord ?? {}),
+      original_url: imageUrl,
+    };
+    if (usedFallbackUpload) {
+      metadataForSave['fallback_upload_used'] = true;
+    }
+
+    const paramsForSave = this.pruneUndefined({
+      store_request: request,
+      store_response: storeResponse,
+      fallback_upload_used: usedFallbackUpload ? true : undefined,
+      fallback_upload_reason: usedFallbackUpload
+        ? (storeError instanceof Error ? storeError.message : storeError)
+        : undefined,
+    });
+
+    const savedRecord = await saveImage(base64, {
+      prompt: prompt ?? `Imported from ${imageUrl}`,
+      model: 'url-import',
+      params: paramsForSave,
+      imageToken: finalImageToken,
+      metadata: metadataForSave,
+      downloadUrl: imageUrl,
+      mimeType: mimeType ?? 'image/png',
+    });
+
+    const resourceUri = getResourceUri(savedRecord.id);
+
+    const payload = this.pruneUndefined({
+      image_token: finalImageToken,
+      resource_uri: resourceUri,
+      mime_type: savedRecord.mimeType ?? 'image/png',
+      created_at: savedRecord.createdAt,
+      metadata: metadataForSave,
+      prompt: savedRecord.prompt,
+      fallback_upload_used: usedFallbackUpload ? true : undefined,
+    });
+
+    return {
+      content: [
+        {
+          type: 'image',
+          data: base64,
+          mimeType: savedRecord.mimeType ?? 'image/png',
+        },
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
     };
   }
 

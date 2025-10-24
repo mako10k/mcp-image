@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import os from 'os';
 import path from 'path';
 import { promises as fs } from 'fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const TMP_ROOT = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-image-mcp-e2e-'));
 process.env.AI_IMAGE_API_MCP_STORAGE_ROOT = TMP_ROOT;
+
+const RUN_EXTENDED = process.env.MCP_IMAGE_RUN_EXTENDED === '1';
+
+const ONE_BY_ONE_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
 
 // Import MCP server and storage modules
 const { AiImageMcpServer } = await import('../src/index.js');
@@ -174,6 +181,88 @@ test('resource: uri and metadata', async () => {
   const uri = storage.getResourceUri(record.id);
   assert.ok(uri.startsWith('resource://ai-image-api/image/'), 'resource URI format');
   assert.ok(record.metadata, 'metadata should be present');
+});
+
+test('caption_image handler: normal', { skip: !RUN_EXTENDED }, async () => {
+  assert.ok(generatedToken, 'generated token must be set before caption test');
+  const response = await (server as any).handleCaptionImage({ image_token: generatedToken });
+  assert.ok(Array.isArray(response.content), 'content should be an array');
+  const textEntry = response.content.find((entry: any) => entry.type === 'text');
+  assert.ok(textEntry, 'caption response should include text entry');
+  const payload = JSON.parse(textEntry.text);
+  assert.ok(typeof payload.caption === 'string' && payload.caption.length > 0, 'caption should be non-empty');
+  assert.ok(payload.image_token, 'payload should include image_token');
+});
+
+test('upscale_image handler: scale 2', async () => {
+  const response = await (server as any).handleUpscaleImage({ image_token: generatedToken, scale: 2, poll_timeout_seconds: 600 });
+  assert.ok(Array.isArray(response.content), 'content should be array');
+  const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
+  assert.ok(jsonEntry, 'upscale response should include JSON entry');
+  const payload = JSON.parse(jsonEntry.text);
+  assert.ok(payload.image_token, 'upscale payload should include image_token');
+  assert.equal(payload.used_params.scale, 2);
+});
+
+test('image_to_image handler: synchronous', { skip: !RUN_EXTENDED }, async () => {
+  const resource = storage.getResourceUri(generatedId);
+  const response = await (server as any).handleImageToImage({
+    resource_uri: resource,
+    prompt: 'stylized minimal cat sketch',
+    steps: 10,
+    strength: 0.6,
+  });
+  assert.ok(Array.isArray(response.content), 'content should be array');
+  const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
+  assert.ok(jsonEntry, 'img2img response should include JSON entry');
+  const payload = JSON.parse(jsonEntry.text);
+  assert.ok(payload.image_token, 'img2img payload should include image_token');
+  assert.equal(payload.prompt, 'stylized minimal cat sketch');
+});
+
+test('store_image_from_url handler: fallback upload', async () => {
+  const pngBuffer = Buffer.from(ONE_BY_ONE_PNG_BASE64, 'base64');
+  const httpServer = createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': pngBuffer.length,
+    });
+    res.end(pngBuffer);
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = httpServer.address() as AddressInfo;
+    const imageUrl = `http://127.0.0.1:${address.port}/test.png`;
+    const response = await (server as any).handleStoreImageFromUrl({
+      image_url: imageUrl,
+      filename: 'fallback-test.png',
+    });
+
+    assert.ok(Array.isArray(response.content), 'content should be array');
+    const textEntry = response.content.find((entry: any) => entry.type === 'text');
+    assert.ok(textEntry, 'store_image_from_url should include JSON entry');
+    const payload = JSON.parse(textEntry.text);
+    assert.ok(payload.image_token, 'payload should include image_token');
+    assert.equal(payload.fallback_upload_used, true, 'fallback upload should be flagged');
+
+    const imageEntry = response.content.find((entry: any) => entry.type === 'image');
+    assert.ok(imageEntry, 'store_image_from_url should include image content');
+    assert.equal(imageEntry.mimeType, 'image/png');
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
 });
 
 // 後始末

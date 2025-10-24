@@ -1,6 +1,6 @@
 // Modal.com AI Image API client
 
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import axios, { AxiosInstance, AxiosResponse, AxiosRequestConfig } from 'axios';
 import {
   Txt2ImgRequest,
   Txt2ImgResponse,
@@ -9,6 +9,19 @@ import {
   OptimizeParametersRequest,
   OptimizeParametersResponse,
   ImageTokenLookupResponse,
+  ImageUploadRequest,
+  ImageUploadResponse,
+  ImageCaptionRequest,
+  ImageCaptionResponse,
+  UpscaleRequest,
+  UpscaleJobStatusResponse,
+  JobResultResponse,
+  ImageToImageJobRequest,
+  ImageToImageJobResponse,
+  ImageUrlUploadRequest,
+  ImageMetadataPatch,
+  ImageMetadataResponse,
+  ImageToImageJobCreationResponse,
 } from './types.js';
 
 export class AiImageApiClient {
@@ -50,6 +63,24 @@ export class AiImageApiClient {
       : {};
   }
 
+  private buildRequestConfig(extra?: AxiosRequestConfig): AxiosRequestConfig | undefined {
+    const hasHeaders = Object.keys(this.jobApiHeaders).length > 0;
+    if (!extra && !hasHeaders) {
+      return undefined;
+    }
+
+    const config: AxiosRequestConfig = { ...(extra ?? {}) };
+    if (hasHeaders) {
+      const existingHeaders = (extra?.headers ?? {}) as Record<string, string>;
+      config.headers = {
+        ...this.jobApiHeaders,
+        ...existingHeaders,
+      };
+    }
+
+    return config;
+  }
+
   /**
    * Generate an image from text via JOB API
    */
@@ -69,7 +100,7 @@ export class AiImageApiClient {
       const response: AxiosResponse<Txt2ImgResponse> = await this.axiosInstance.post(
         `${this.jobApiUrl}/text-to-image?include_base64=${payload.include_base64 ? 'true' : 'false'}`,
         payload,
-        this.jobApiHeaders ? { headers: this.jobApiHeaders } : undefined
+        this.buildRequestConfig()
       );
       return response.data;
     } catch (error) {
@@ -81,7 +112,7 @@ export class AiImageApiClient {
     try {
       const response: AxiosResponse<ImageTokenLookupResponse> = await this.axiosInstance.get(
         `${this.jobApiUrl}/images/${encodeURIComponent(imageToken)}`,
-        this.jobApiHeaders ? { headers: this.jobApiHeaders } : undefined
+        this.buildRequestConfig()
       );
       return response.data;
     } catch (error) {
@@ -96,7 +127,7 @@ export class AiImageApiClient {
     try {
       const response: AxiosResponse<ModelListResponse> = await this.axiosInstance.get(
         `${this.jobApiUrl}/model-configs`,
-        this.jobApiHeaders ? { headers: this.jobApiHeaders } : undefined
+        this.buildRequestConfig()
       );
       return response.data;
     } catch (error) {
@@ -111,7 +142,7 @@ export class AiImageApiClient {
     try {
       const response: AxiosResponse<ModelDetailResponse> = await this.axiosInstance.get(
         `${this.jobApiUrl}/model-configs/${encodeURIComponent(modelName)}`,
-        this.jobApiHeaders ? { headers: this.jobApiHeaders } : undefined
+        this.buildRequestConfig()
       );
       return response.data;
     } catch (error) {
@@ -137,16 +168,130 @@ export class AiImageApiClient {
       const response: AxiosResponse<OptimizeParametersResponse> = await this.axiosInstance.post(
         `${this.jobApiUrl}/optimize_params_v2`,
         payload,
-        this.jobApiHeaders
-          ? { 
-              headers: this.jobApiHeaders,
-              timeout: 600000 // 10-minute timeout for JOBAPI (initial connections can be slow)
-            }
-          : { timeout: 600000 } // 10-minute timeout for JOBAPI (initial connections can be slow)
+        this.buildRequestConfig({ timeout: 600000 })
       );
       return response.data;
     } catch (error) {
       throw this.handleError(error, 'Failed to optimize prompt');
+    }
+  }
+
+  async captionImage(request: ImageCaptionRequest): Promise<ImageCaptionResponse> {
+    try {
+      const response: AxiosResponse<ImageCaptionResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/images/caption`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to caption image');
+    }
+  }
+
+  async uploadImage(request: ImageUploadRequest): Promise<ImageUploadResponse> {
+    try {
+      const response: AxiosResponse<ImageUploadResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/images/store`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to upload image');
+    }
+  }
+
+  async storeImageFromUrl(request: ImageUrlUploadRequest): Promise<ImageUploadResponse> {
+    try {
+      const response: AxiosResponse<ImageUploadResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/images/store-from-url`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to store image from URL');
+    }
+  }
+
+  async patchImageMetadata(imageToken: string, patch: ImageMetadataPatch): Promise<ImageMetadataResponse> {
+    try {
+      const response: AxiosResponse<ImageMetadataResponse> = await this.axiosInstance.patch(
+        `${this.jobApiUrl}/images/${encodeURIComponent(imageToken)}/meta`,
+        patch,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, `Failed to patch metadata for image token ${imageToken}`);
+    }
+  }
+
+  async upscaleImage(request: UpscaleRequest): Promise<UpscaleJobStatusResponse> {
+    try {
+      const response: AxiosResponse<UpscaleJobStatusResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/upscale`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to upscale image');
+    }
+  }
+
+  async getJobStatus(jobId: string): Promise<Record<string, unknown>> {
+    try {
+      const response: AxiosResponse<Record<string, unknown>> = await this.axiosInstance.get(
+        `${this.jobApiUrl}/jobs/${encodeURIComponent(jobId)}/status`,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, `Failed to fetch job status for ${jobId}`);
+    }
+  }
+
+  async getJobResult(jobId: string, includeBase64 = false): Promise<JobResultResponse> {
+    try {
+      const response: AxiosResponse<JobResultResponse> = await this.axiosInstance.get(
+        `${this.jobApiUrl}/jobs/${encodeURIComponent(jobId)}/result`,
+        this.buildRequestConfig({ params: { include_base64: includeBase64 } })
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, `Failed to fetch job result for ${jobId}`);
+    }
+  }
+
+  async imageToImage(
+    request: ImageToImageJobRequest,
+    options?: { includeBase64?: boolean }
+  ): Promise<ImageToImageJobResponse> {
+    try {
+      const includeBase64 = options?.includeBase64 ?? true;
+      const response: AxiosResponse<ImageToImageJobResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/image-to-image`,
+        request,
+        this.buildRequestConfig({ params: { include_base64: includeBase64 } })
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to perform image-to-image conversion');
+    }
+  }
+
+  async createImageToImageJob(request: ImageToImageJobRequest): Promise<ImageToImageJobCreationResponse> {
+    try {
+      const response: AxiosResponse<ImageToImageJobCreationResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/jobs/image-to-image`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to enqueue image-to-image job');
     }
   }
 
