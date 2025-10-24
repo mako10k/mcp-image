@@ -1,6 +1,6 @@
 {
   "name": "@mako10k/mcp-image",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MCP Server for AI Image Generation API via JOBAPI",
   "main": "dist/index.js",
   "type": "module",
