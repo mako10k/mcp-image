@@ -153,6 +153,7 @@ export interface JobResultResponse {
 export interface ImageToImageJobRequest {
   prompt: string;
   init_image_token: string;
+  mask_image_token?: string;
   negative_prompt?: string;
   model?: string;
   guidance_scale?: number;

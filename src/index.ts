@@ -448,6 +448,18 @@ export class AiImageMcpServer {
                   maximum: 1,
                   description: 'Blend strength between source image and prompt (default 0.7).'
                 },
+                mask_image_token: {
+                  type: 'string',
+                  description: 'Mask image token for inpainting (white = inpaint area, black = preserve area).'
+                },
+                mask_image_base64: {
+                  type: 'string',
+                  description: 'Base64-encoded mask image for inpainting.'
+                },
+                mask_resource_uri: {
+                  type: 'string',
+                  description: 'Resource URI referencing a cached mask image for inpainting.'
+                },
                 include_base64: {
                   type: 'boolean',
                   description: 'Whether to request base64 output directly from the sync endpoint (default true).'
@@ -1572,6 +1584,42 @@ export class AiImageMcpServer {
     );
   }
 
+  private async resolveMaskImageReference(input: Record<string, unknown>): Promise<ResolvedImageReference | undefined> {
+    const maskResourceUri = this.sanitizeOptionalString(input.mask_resource_uri);
+    if (maskResourceUri) {
+      const record = await getImageRecord(this.extractResourceId(maskResourceUri));
+      if (!record) {
+        throw new McpError(ErrorCode.InvalidRequest, `Mask resource not found: ${maskResourceUri}`);
+      }
+      const tokenFromRecord = this.sanitizeOptionalString(record.imageToken);
+      return {
+        imageToken: tokenFromRecord,
+        record,
+        source: 'resource_uri',
+      };
+    }
+
+    const maskImageToken = this.sanitizeOptionalString(input.mask_image_token);
+    if (maskImageToken) {
+      const record = await getImageRecordByToken(maskImageToken);
+      return {
+        imageToken: maskImageToken,
+        record: record ?? undefined,
+        source: 'image_token',
+      };
+    }
+
+    const maskImageBase64 = this.sanitizeOptionalString(input.mask_image_base64);
+    if (maskImageBase64) {
+      return {
+        directBase64: maskImageBase64,
+        source: 'image_base64',
+      };
+    }
+
+    return undefined;
+  }
+
   private async readRecordBase64(record: ImageRecord): Promise<string | undefined> {
     try {
       return await readImageBase64(record);
@@ -1983,6 +2031,16 @@ export class AiImageMcpServer {
       prompt,
       init_image_token: ensured.imageToken,
     };
+
+    // Handle mask image for inpainting
+    const maskReference = await this.resolveMaskImageReference(params);
+    if (maskReference) {
+      const ensuredMask = await this.ensureImageToken(maskReference, {
+        uploadIfNeeded: true,
+        uploadSource: 'mcp-mask-image-upload',
+      });
+      request.mask_image_token = ensuredMask.imageToken;
+    }
 
     const negativePrompt = this.sanitizeOptionalString(params.negative_prompt);
     if (negativePrompt) {
