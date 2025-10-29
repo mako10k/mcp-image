@@ -460,6 +460,11 @@ export class AiImageMcpServer {
                   type: 'string',
                   description: 'Resource URI referencing a cached mask image for inpainting.'
                 },
+                resize_mode: {
+                  type: 'string',
+                  enum: ['contain', 'cover', 'keep_original', 'stretch'],
+                  description: 'Resize mode: "contain" (fit inside with padding), "cover" (fit outside with crop), "keep_original" (maintain original size), "stretch" (ignore aspect ratio). Default: "contain".'
+                },
                 include_base64: {
                   type: 'boolean',
                   description: 'Whether to request base64 output directly from the sync endpoint (default true).'
@@ -2156,6 +2161,11 @@ export class AiImageMcpServer {
     const strength = this.parseOptionalNumber(params.strength, 'strength', { min: 0, max: 1 });
     if (strength !== undefined) {
       request.strength = strength;
+    }
+
+    const resizeMode = this.sanitizeOptionalString(params.resize_mode);
+    if (resizeMode) {
+      request.resize_mode = resizeMode;
     }
 
     if (asyncMode) {

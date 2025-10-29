@@ -162,6 +162,7 @@ export interface ImageToImageJobRequest {
   height?: number;
   seed?: number;
   strength?: number;
+  resize_mode?: string;
 }
 
 export interface ImageToImageJobResponse {
