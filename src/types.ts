@@ -194,6 +194,38 @@ export interface ImageMetadataResponse {
   metadata: Record<string, unknown>;
 }
 
+export interface SegmentationJobRequest {
+  image_token: string;
+  text_prompt: string;
+  box_threshold?: number;
+  text_threshold?: number;
+  blur_radius?: number;
+  blur_bias?: number;
+  fg_color?: number[];
+  bg_color?: number[];
+  model_size?: string;
+  invert_mask?: boolean;
+}
+
+export interface MaskResultData {
+  mask_id: number;
+  mask_token: string;
+  confidence: number;
+}
+
+export interface ProcessedImageResultData {
+  image_id: number;
+  image_token: string;
+}
+
+export interface SegmentationJobResponse {
+  success: boolean;
+  message: string;
+  masks: MaskResultData[];
+  processed_images: ProcessedImageResultData[];
+  source_image_token: string;
+}
+
 export interface ImageSearchParams {
   query?: string;
   model?: string;

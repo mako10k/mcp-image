@@ -544,6 +544,79 @@ export class AiImageMcpServer {
               additionalProperties: false,
             },
           },
+          {
+            name: 'segment_image',
+            description: 'Extract object segments from an image using SAM (Segment Anything Model). Returns mask images and processed images.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                image_token: {
+                  type: 'string',
+                  description: 'Source image token (uploaded image ID).'
+                },
+                resource_uri: {
+                  type: 'string',
+                  description: 'Resource URI referencing the source image.'
+                },
+                image_base64: {
+                  type: 'string',
+                  description: 'Base64-encoded source image. The server uploads this to obtain a token if needed.'
+                },
+                text_prompt: {
+                  type: 'string',
+                  description: 'Text prompt for object detection (e.g., "cat", "person").'
+                },
+                box_threshold: {
+                  type: 'number',
+                  minimum: 0.0,
+                  maximum: 1.0,
+                  description: 'Box detection threshold (default 0.25).'
+                },
+                text_threshold: {
+                  type: 'number',
+                  minimum: 0.0,
+                  maximum: 1.0,
+                  description: 'Text matching threshold (default 0.25).'
+                },
+                blur_radius: {
+                  type: 'integer',
+                  minimum: 0,
+                  description: 'Blur radius for mask edges (0=no blur, default 0).'
+                },
+                blur_bias: {
+                  type: 'number',
+                  minimum: 0.0,
+                  maximum: 1.0,
+                  description: 'Blur bias (0.0=inside, 0.5=center, 1.0=outside, default 0.5).'
+                },
+                fg_color: {
+                  type: 'array',
+                  items: { type: 'integer', minimum: 0, maximum: 255 },
+                  minItems: 3,
+                  maxItems: 3,
+                  description: 'Foreground color [R, G, B].'
+                },
+                bg_color: {
+                  type: 'array',
+                  items: { type: 'integer', minimum: 0, maximum: 255 },
+                  minItems: 3,
+                  maxItems: 3,
+                  description: 'Background color [R, G, B].'
+                },
+                model_size: {
+                  type: 'string',
+                  enum: ['tiny', 'base'],
+                  description: 'Model size: "tiny" or "base" (default "tiny").'
+                },
+                invert_mask: {
+                  type: 'boolean',
+                  description: 'Whether to invert the mask (default false).'
+                }
+              },
+              required: ['text_prompt'],
+              additionalProperties: false,
+            },
+          },
         ],
       };
     });
@@ -586,6 +659,9 @@ export class AiImageMcpServer {
 
           case 'store_image_from_url':
             return await this.handleStoreImageFromUrl(args as Record<string, unknown>);
+
+          case 'segment_image':
+            return await this.handleSegmentImage(args as Record<string, unknown>);
 
           default:
             throw new McpError(
@@ -2398,6 +2474,104 @@ export class AiImageMcpServer {
           data: base64,
           mimeType: savedRecord.mimeType ?? 'image/png',
         },
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
+    };
+  }
+
+  private async handleSegmentImage(params: Record<string, unknown>) {
+    const textPrompt = this.sanitizeOptionalString(params.text_prompt);
+    if (!textPrompt) {
+      throw new McpError(ErrorCode.InvalidRequest, '"text_prompt" is required and must be a non-empty string.');
+    }
+
+    const reference = await this.resolveImageReference(params);
+    const ensured = await this.ensureImageToken(reference, {
+      uploadIfNeeded: true,
+      uploadSource: 'mcp-segment-upload',
+      derivedFrom: reference.imageToken ? [reference.imageToken] : undefined,
+      prompt: textPrompt,
+    });
+
+    const request: import('./types.js').SegmentationJobRequest = {
+      image_token: ensured.imageToken,
+      text_prompt: textPrompt,
+    };
+
+    const boxThreshold = this.parseOptionalNumber(params.box_threshold, 'box_threshold', { min: 0, max: 1 });
+    if (boxThreshold !== undefined) {
+      request.box_threshold = boxThreshold;
+    }
+
+    const textThreshold = this.parseOptionalNumber(params.text_threshold, 'text_threshold', { min: 0, max: 1 });
+    if (textThreshold !== undefined) {
+      request.text_threshold = textThreshold;
+    }
+
+    const blurRadius = this.parseOptionalInteger(params.blur_radius, 'blur_radius', { min: 0 });
+    if (blurRadius !== undefined) {
+      request.blur_radius = blurRadius;
+    }
+
+    const blurBias = this.parseOptionalNumber(params.blur_bias, 'blur_bias', { min: 0, max: 1 });
+    if (blurBias !== undefined) {
+      request.blur_bias = blurBias;
+    }
+
+    if (params.fg_color && Array.isArray(params.fg_color)) {
+      request.fg_color = params.fg_color as number[];
+    }
+
+    if (params.bg_color && Array.isArray(params.bg_color)) {
+      request.bg_color = params.bg_color as number[];
+    }
+
+    const modelSize = this.sanitizeOptionalString(params.model_size);
+    if (modelSize) {
+      request.model_size = modelSize;
+    }
+
+    const invertMask = this.parseOptionalBoolean(params.invert_mask, 'invert_mask');
+    if (invertMask !== undefined) {
+      request.invert_mask = invertMask;
+    }
+
+    console.error('[AI Image] Segmenting image via Modal SAM API', {
+      image_token: ensured.imageToken,
+      text_prompt: textPrompt,
+    });
+
+    const response = await this.getApiClient().segmentImage(request);
+
+    if (!response.success) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Segmentation failed: ${response.message}`
+      );
+    }
+
+    const payload = this.pruneUndefined({
+      success: response.success,
+      message: response.message,
+      source_image_token: response.source_image_token,
+      masks: response.masks.map(mask => ({
+        mask_id: mask.mask_id,
+        mask_token: mask.mask_token,
+        resource_uri: getResourceUri(mask.mask_token),
+        confidence: mask.confidence,
+      })),
+      processed_images: response.processed_images.map(img => ({
+        image_id: img.image_id,
+        image_token: img.image_token,
+        resource_uri: getResourceUri(img.image_token),
+      })),
+    });
+
+    return {
+      content: [
         {
           type: 'text',
           text: JSON.stringify(payload),

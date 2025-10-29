@@ -22,6 +22,8 @@ import {
   ImageMetadataPatch,
   ImageMetadataResponse,
   ImageToImageJobCreationResponse,
+  SegmentationJobRequest,
+  SegmentationJobResponse,
 } from './types.js';
 
 export class AiImageApiClient {
@@ -292,6 +294,19 @@ export class AiImageApiClient {
       return response.data;
     } catch (error) {
       throw this.handleError(error, 'Failed to enqueue image-to-image job');
+    }
+  }
+
+  async segmentImage(request: SegmentationJobRequest): Promise<SegmentationJobResponse> {
+    try {
+      const response: AxiosResponse<SegmentationJobResponse> = await this.axiosInstance.post(
+        `${this.jobApiUrl}/images/segment`,
+        request,
+        this.buildRequestConfig()
+      );
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, 'Failed to segment image');
     }
   }
 
