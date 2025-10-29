@@ -49,6 +49,7 @@ import {
   RESOURCE_URI_PREFIX,
   ImageRecord,
 } from './storage.js';
+import { executeDrawingCommands } from './drawing.js';
 
 interface ImageReferenceInput {
   resource_uri?: unknown;
@@ -622,6 +623,50 @@ export class AiImageMcpServer {
               additionalProperties: false,
             },
           },
+          {
+            name: 'draw_image',
+            description: 'Generate an image from drawing commands. Supports lines, curves, rectangles, circles, ellipses, polygons, text, gradients, image composition, and transforms. Commands are executed sequentially like PostScript/SVG.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                commands: {
+                  type: 'array',
+                  description: 'Array of drawing commands to execute sequentially.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      type: {
+                        type: 'string',
+                        enum: [
+                          'line', 'curve', 'rect', 'circle', 'ellipse', 'polygon',
+                          'fill', 'stroke', 'text', 'image', 'clearRect',
+                          'translate', 'rotate', 'scale', 'setTransform', 'resetTransform',
+                          'save', 'restore', 'beginPath', 'closePath'
+                        ],
+                        description: 'Command type'
+                      }
+                    },
+                    required: ['type'],
+                    additionalProperties: true
+                  }
+                },
+                width: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 4096,
+                  description: 'Canvas width in pixels (default 512)'
+                },
+                height: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 4096,
+                  description: 'Canvas height in pixels (default 512)'
+                }
+              },
+              required: ['commands'],
+              additionalProperties: false
+            }
+          },
         ],
       };
     });
@@ -667,6 +712,9 @@ export class AiImageMcpServer {
 
           case 'segment_image':
             return await this.handleSegmentImage(args as Record<string, unknown>);
+
+          case 'draw_image':
+            return await this.handleDrawImage(args as Record<string, unknown>);
 
           default:
             throw new McpError(
@@ -2588,6 +2636,68 @@ export class AiImageMcpServer {
         },
       ],
     };
+  }
+
+  private async handleDrawImage(params: Record<string, unknown>) {
+    if (!params.commands || !Array.isArray(params.commands)) {
+      throw new McpError(ErrorCode.InvalidRequest, '"commands" is required and must be an array.');
+    }
+
+    const width = this.parseOptionalInteger(params.width, 'width', { min: 1, max: 4096 }) ?? 512;
+    const height = this.parseOptionalInteger(params.height, 'height', { min: 1, max: 4096 }) ?? 512;
+
+    console.error('[AI Image] Generating image from drawing commands', {
+      commandCount: params.commands.length,
+      width,
+      height,
+    });
+
+    try {
+      const imageBuffer = await executeDrawingCommands(params.commands, width, height);
+      const base64Data = imageBuffer.toString('base64');
+
+      const imageToken = crypto.randomUUID();
+      const record = await saveImage(base64Data, {
+        prompt: 'drawing-commands',
+        model: 'canvas-draw',
+        params: {
+          width,
+          height,
+          commandCount: params.commands.length,
+        },
+        imageToken,
+        metadata: {
+          commandCount: params.commands.length,
+          width,
+          height,
+          generatedAt: new Date().toISOString(),
+        },
+      });
+
+      const payload = {
+        success: true,
+        image_token: record.imageToken!,
+        resource_uri: getResourceUri(record.imageToken!),
+        width,
+        height,
+        command_count: params.commands.length,
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(payload),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error('[AI Image] Drawing command execution failed:', error);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Drawing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   async run(): Promise<void> {

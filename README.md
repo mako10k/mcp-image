@@ -199,6 +199,45 @@ Optimize a prompt for image generation and surface recommended parameters. Norma
 - `query` (required): Prompt or scene description to optimize.
 - `target_model`: Optional model to target.
 
+### draw_image
+Generate an image programmatically from drawing commands. This tool uses the HTML5 Canvas API to render shapes, text, gradients, and composed images without AI inference. Commands are executed sequentially like PostScript or SVG paths.
+
+**Parameters:**
+
+- `commands` (required): Array of drawing command objects with `type` and parameters.
+- `width`: Canvas width in pixels (1–4096, default 512).
+- `height`: Canvas height in pixels (1–4096, default 512).
+
+**Supported command types:**
+
+- **Shapes**: `line`, `curve`, `rect`, `circle`, `ellipse`, `polygon`
+- **Styling**: `fill` (solid color or gradient), `stroke`
+- **Text**: `text` (with font, alignment, baseline)
+- **Composition**: `image` (load and transform external images)
+- **Transforms**: `translate`, `rotate`, `scale`, `setTransform`, `resetTransform`
+- **Path operations**: `beginPath`, `closePath`, `clearRect`
+- **State**: `save`, `restore`
+
+**Example:**
+
+```javascript
+await mcp.callTool('draw_image', {
+  commands: [
+    { type: 'fill', color: '#f0f0f0' },
+    { type: 'rect', x: 0, y: 0, width: 512, height: 512 },
+    { type: 'fill', color: '#ff6b6b' },
+    { type: 'circle', x: 256, y: 200, radius: 80 },
+    { type: 'fill', gradient: { type: 'linear', x0: 156, y0: 300, x1: 356, y1: 450, stops: [
+      { offset: 0, color: '#4dabf7' },
+      { offset: 1, color: '#51cf66' }
+    ]}},
+    { type: 'rect', x: 156, y: 300, width: 200, height: 150 }
+  ],
+  width: 512,
+  height: 512
+});
+```
+
 ### search_images
 Search the local cache of generated images. Modal does not provide a search endpoint, so this server filters its own metadata store.
 
@@ -270,6 +309,23 @@ await mcp.callTool('get_available_models', {});
 // 4. Obtain only the optimization output
 await mcp.callTool('optimize_prompt', {
 	query: 'A cat relaxing in a garden'
+});
+
+// 5. Generate programmatic drawings
+await mcp.callTool('draw_image', {
+	commands: [
+		{ type: 'fill', color: '#ffffff' },
+		{ type: 'rect', x: 0, y: 0, width: 512, height: 512 },
+		{ type: 'fill', color: '#ff6b6b' },
+		{ type: 'circle', x: 256, y: 200, radius: 80 },
+		{ type: 'fill', gradient: { type: 'linear', x0: 100, y0: 300, x1: 400, y1: 450, stops: [
+			{ offset: 0, color: '#4dabf7' },
+			{ offset: 1, color: '#51cf66' }
+		]}},
+		{ type: 'rect', x: 156, y: 300, width: 200, height: 150 }
+	],
+	width: 512,
+	height: 512
 });
 ```
 

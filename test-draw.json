@@ -1,0 +1,14 @@
+{
+  "commands": [
+    { "type": "fill", "color": "#f0f0f0" },
+    { "type": "rect", "x": 0, "y": 0, "width": 512, "height": 512 },
+    { "type": "fill", "color": "#ff6b6b" },
+    { "type": "circle", "x": 256, "y": 200, "radius": 80 },
+    { "type": "fill", "color": "#4dabf7" },
+    { "type": "rect", "x": 156, "y": 300, "width": 200, "height": 150 },
+    { "type": "fill", "color": "#51cf66" },
+    { "type": "polygon", "points": [256, 350, 206, 420, 306, 420] }
+  ],
+  "width": 512,
+  "height": 512
+}

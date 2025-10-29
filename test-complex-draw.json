@@ -1,0 +1,35 @@
+{
+  "commands": [
+    { "type": "fill", "color": "#1a1a2e" },
+    { "type": "rect", "x": 0, "y": 0, "width": 800, "height": 600 },
+    
+    { "type": "save" },
+    { "type": "fill", "gradient": {
+      "type": "radial",
+      "x0": 400, "y0": 300, "r0": 0,
+      "x1": 400, "y1": 300, "r1": 300,
+      "stops": [
+        { "offset": 0, "color": "#ffd700" },
+        { "offset": 0.5, "color": "#ff8c00" },
+        { "offset": 1, "color": "#1a1a2e" }
+      ]
+    }},
+    { "type": "circle", "x": 400, "y": 300, "radius": 150 },
+    { "type": "restore" },
+    
+    { "type": "fill", "color": "#e0e0e0" },
+    { "type": "polygon", "points": [400, 50, 450, 150, 550, 150, 475, 200, 500, 300, 400, 250, 300, 300, 325, 200, 250, 150, 350, 150] },
+    
+    { "type": "fill", "color": "#16213e" },
+    { "type": "rect", "x": 50, "y": 400, "width": 700, "height": 150 },
+    
+    { "type": "stroke", "color": "#00d4ff", "width": 3 },
+    { "type": "beginPath" },
+    { "type": "curve", "points": [[100, 450], [200, 420], [300, 470], [400, 430], [500, 460], [600, 440], [700, 470]], "smooth": true },
+    
+    { "type": "fill", "color": "#ffffff" },
+    { "type": "text", "text": "Procedural Graphics", "x": 400, "y": 560, "font": "bold 36px Arial", "align": "center" }
+  ],
+  "width": 800,
+  "height": 600
+}
