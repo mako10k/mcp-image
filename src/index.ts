@@ -68,6 +68,9 @@ export class AiImageMcpServer {
   private server: Server;
   private apiClient: AiImageApiClient | null = null;
   private configWarningShown = false;
+  // Controls whether to include large base64 image payloads in tool responses.
+  // Default: false (omit base64 to avoid token blow-ups). Enable by setting AI_IMAGE_MCP_INCLUDE_BASE64=1|true|yes|on
+  private readonly includeBase64Flag: boolean;
 
   constructor() {
     this.server = new Server(
@@ -83,10 +86,18 @@ export class AiImageMcpServer {
       }
     );
 
+    this.includeBase64Flag = this.readEnvFlag('AI_IMAGE_MCP_INCLUDE_BASE64');
+
     this.setupToolHandlers();
     this.setupResourceHandlers();
     this.setupErrorHandling();
     this.warnIfConfigMissing();
+  }
+
+  private readEnvFlag(name: string): boolean {
+    const raw = process.env[name];
+    if (!raw) return false;
+    return /^(1|true|yes|on)$/i.test(raw.trim());
   }
 
   private setupErrorHandling(): void {
@@ -268,7 +279,7 @@ export class AiImageMcpServer {
           },
           {
             name: 'get_image_by_token',
-            description: 'Retrieve image metadata and content using an image_token. Returns the stored image record including base64 data, metadata, and download URL if available.',
+            description: 'Retrieve image metadata and content using an image_token. By default, returns metadata and resource_uri only; include base64 image payloads by setting env AI_IMAGE_MCP_INCLUDE_BASE64=true.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -744,10 +755,12 @@ export class AiImageMcpServer {
         const preview = image.prompt.length > 60
           ? `${image.prompt.slice(0, 57)}...`
           : image.prompt;
+        const title = `${image.model} • ${new Date(image.createdAt).toLocaleString()}`;
         return {
           uri: getResourceUri(image.id),
           mimeType: image.mimeType ?? 'image/png',
-          name: `generated-${image.id}`,
+          name: `generated-${image.id}.png`,
+          title,
           description: `${new Date(image.createdAt).toLocaleString()} | ${image.model} | ${preview}`,
         };
       });
@@ -855,6 +868,8 @@ export class AiImageMcpServer {
 
     const primaryContent: Record<string, unknown> = {
       uri,
+      name: `generated-${record.id}.png`,
+      title: `${record.model} • ${new Date(record.createdAt).toLocaleString()}`,
       blob: base64,
       mimeType,
       description,
@@ -869,6 +884,8 @@ export class AiImageMcpServer {
         primaryContent,
         {
           uri,
+          name: `generated-${record.id}.json`,
+          title: `Metadata • ${new Date(record.createdAt).toLocaleString()}`,
           mimeType: 'application/json',
           text: JSON.stringify({
             created_at: record.createdAt,
@@ -1003,13 +1020,15 @@ export class AiImageMcpServer {
     }
 
     let base64: string | undefined;
-    try {
-      base64 = await readImageBase64(record);
-    } catch (error) {
-      console.warn('[AI Image] Failed to read image binary for token', {
-        imageToken: image_token,
-        err: error instanceof Error ? error.message : error,
-      });
+    if (this.includeBase64Flag) {
+      try {
+        base64 = await readImageBase64(record);
+      } catch (error) {
+        console.warn('[AI Image] Failed to read image binary for token', {
+          imageToken: image_token,
+          err: error instanceof Error ? error.message : error,
+        });
+      }
     }
 
     const resourceUri = getResourceUri(record.id);
@@ -1032,13 +1051,14 @@ export class AiImageMcpServer {
       responseData.download_url = record.downloadUrl;
     }
 
-    if (base64 && base64.length > 0) {
+    // Only include base64 in JSON when explicitly enabled
+    if (this.includeBase64Flag && base64 && base64.length > 0) {
       responseData.image_base64 = base64;
     }
 
     const content: Array<Record<string, unknown>> = [];
 
-    if (base64 && base64.length > 0) {
+    if (this.includeBase64Flag && base64 && base64.length > 0) {
       content.push({
         type: 'image',
         data: base64,
@@ -1305,19 +1325,20 @@ export class AiImageMcpServer {
       metadata: metadataRecord,
     };
 
-    return {
-      content: [
-        {
-          type: 'image',
-          data: base64Payload,
-          mimeType: record.mimeType ?? 'image/png',
-        },
-        {
-          type: 'text',
-          text: JSON.stringify(jsonPayload),
-        },
-      ],
-    };
+    const content: Array<Record<string, unknown>> = [];
+    if (this.includeBase64Flag) {
+      content.push({
+        type: 'image',
+        data: base64Payload,
+        mimeType: record.mimeType ?? 'image/png',
+      });
+    }
+    content.push({
+      type: 'text',
+      text: JSON.stringify(jsonPayload),
+    });
+
+    return { content };
   }
 
   /**
@@ -2122,19 +2143,20 @@ export class AiImageMcpServer {
       used_params: { scale: scale ?? 2 },
     });
 
-    return {
-      content: [
-        {
-          type: 'image',
-          data: base64,
-          mimeType: savedRecord.mimeType ?? 'image/png',
-        },
-        {
-          type: 'text',
-          text: JSON.stringify(payload),
-        },
-      ],
-    };
+    const content: Array<Record<string, unknown>> = [];
+    if (this.includeBase64Flag) {
+      content.push({
+        type: 'image',
+        data: base64,
+        mimeType: savedRecord.mimeType ?? 'image/png',
+      });
+    }
+    content.push({
+      type: 'text',
+      text: JSON.stringify(payload),
+    });
+
+    return { content };
   }
 
   private async handleImageToImage(params: Record<string, unknown>) {
@@ -2287,19 +2309,20 @@ export class AiImageMcpServer {
       source_image_token: ensured.imageToken,
     });
 
-    return {
-      content: [
-        {
-          type: 'image',
-          data: base64,
-          mimeType: savedRecord.mimeType ?? 'image/png',
-        },
-        {
-          type: 'text',
-          text: JSON.stringify(payload),
-        },
-      ],
-    };
+    const content: Array<Record<string, unknown>> = [];
+    if (this.includeBase64Flag) {
+      content.push({
+        type: 'image',
+        data: base64,
+        mimeType: savedRecord.mimeType ?? 'image/png',
+      });
+    }
+    content.push({
+      type: 'text',
+      text: JSON.stringify(payload),
+    });
+
+    return { content };
   }
 
   private async handleStoreImageFromUrl(params: Record<string, unknown>) {
@@ -2525,19 +2548,20 @@ export class AiImageMcpServer {
       fallback_upload_used: usedFallbackUpload ? true : undefined,
     });
 
-    return {
-      content: [
-        {
-          type: 'image',
-          data: base64,
-          mimeType: savedRecord.mimeType ?? 'image/png',
-        },
-        {
-          type: 'text',
-          text: JSON.stringify(payload),
-        },
-      ],
-    };
+    const content: Array<Record<string, unknown>> = [];
+    if (this.includeBase64Flag) {
+      content.push({
+        type: 'image',
+        data: base64,
+        mimeType: savedRecord.mimeType ?? 'image/png',
+      });
+    }
+    content.push({
+      type: 'text',
+      text: JSON.stringify(payload),
+    });
+
+    return { content };
   }
 
   private async handleSegmentImage(params: Record<string, unknown>) {

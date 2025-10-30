@@ -250,8 +250,10 @@ test('store_image_from_url handler: fallback upload', async () => {
     assert.equal(payload.fallback_upload_used, true, 'fallback upload should be flagged');
 
     const imageEntry = response.content.find((entry: any) => entry.type === 'image');
-    assert.ok(imageEntry, 'store_image_from_url should include image content');
-    assert.equal(imageEntry.mimeType, 'image/png');
+    // 既定では Base64 を含めない。存在する場合のみ MIME を確認。
+    if (imageEntry) {
+      assert.equal(imageEntry.mimeType, 'image/png');
+    }
   } finally {
     await new Promise<void>((resolve, reject) => {
       httpServer.close((error) => {

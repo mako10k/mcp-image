@@ -76,9 +76,11 @@ test('handleGetImageByToken returns expected payload', async () => {
   assert.ok(response.content.length >= 1, 'content should include at least image or JSON entry');
 
   const imageEntry = response.content.find((c: any) => c.type === 'image');
-    assert.ok(imageEntry, 'should include image entry');
+  // 既定では Base64 を含めない。存在する場合のみ軽く検証。
+  if (imageEntry) {
     assert.equal(imageEntry.mimeType, 'image/png');
     assert.ok(typeof imageEntry.data === 'string' && imageEntry.data.length > 0);
+  }
 
   const jsonEntry = response.content.find((c: any) => c.type === 'text');
   assert.ok(jsonEntry, 'should include JSON text entry');
@@ -86,6 +88,7 @@ test('handleGetImageByToken returns expected payload', async () => {
   assert.equal(payload.image_token, testToken);
   assert.equal(payload.model, 'handler-model');
   assert.equal(payload.prompt, 'handler token test');
+  assert.ok(payload.resource_uri, 'should include resource_uri for later retrieval');
 
   } finally {
     delete process.env.AI_IMAGE_API_MCP_STORAGE_ROOT;

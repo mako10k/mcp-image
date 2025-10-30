@@ -27,7 +27,8 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 {
 	"content": [
 		// 画像本体（MCP のバイナリ/画像コンテンツ）
-		{ "type": "image", "mime_type": "image/png", "data": "<base64>" },
+	// デフォルトでは base64 を含みません（後述の環境変数で有効化可能）。
+	{ "type": "image", "mime_type": "image/png", "data": "<base64>" },
 
 		// 付随メタデータ（application/json）
 		{ "type": "application/json", "json": {
@@ -42,6 +43,22 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 ```
 
 この方針により、クライアント側でのパースが安定し、stdout に混在出力が混ざることによる JSON-RPC 破損を防ぎます。
+
+### Base64 出力の制御（デフォルト無効）
+
+大きな Base64 画像ペイロードは LLM のトークン予算を圧迫するため、ツール応答では既定で送出しません。画像は常にローカルキャッシュへ保存され、`resource_uri` で参照できます。
+
+- 環境変数 `AI_IMAGE_MCP_INCLUDE_BASE64` を `true`/`1`/`yes`/`on` に設定すると、ツール応答に画像の Base64 を含めます。
+- 既定値は未設定（= false）です。JSON には `image_token` と `resource_uri` が含まれるため、必要に応じて `readResource` で画像本体を取得してください。
+
+例: Base64 を有効化してサーバを起動
+
+```bash
+export AI_IMAGE_MCP_INCLUDE_BASE64=true
+npx --yes @mako10k/mcp-image
+```
+
+注: `get_image_by_token` も同様に、既定ではメタデータのみを返し、Base64 は上記の環境変数を有効化した場合に限り返します。
 
 ## Setup
 
