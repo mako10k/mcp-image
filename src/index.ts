@@ -278,20 +278,6 @@ export class AiImageMcpServer {
             },
           },
           {
-            name: 'get_image_by_token',
-            description: 'Retrieve image metadata and content using an image_token. By default, returns metadata and resource_uri only; include base64 image payloads by setting env AI_IMAGE_MCP_INCLUDE_BASE64=true.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                image_token: {
-                  type: 'string',
-                  description: 'The image token returned by a previous generation request.',
-                },
-              },
-              required: ['image_token'],
-            },
-          },
-          {
             name: 'caption_image',
             description: 'Generate a natural language caption describing an existing image.',
             inputSchema: {
@@ -300,10 +286,6 @@ export class AiImageMcpServer {
                 resource_uri: {
                   type: 'string',
                   description: 'Resource URI referencing a cached image.'
-                },
-                image_token: {
-                  type: 'string',
-                  description: 'Existing Modal image token to caption.'
                 },
                 image_base64: {
                   type: 'string',
@@ -367,10 +349,6 @@ export class AiImageMcpServer {
                   type: 'string',
                   description: 'Resource URI referencing a cached image to upscale.'
                 },
-                image_token: {
-                  type: 'string',
-                  description: 'Modal image token to upscale.'
-                },
                 image_base64: {
                   type: 'string',
                   description: 'Base64-encoded image data. The server will upload this before upscaling.'
@@ -406,10 +384,6 @@ export class AiImageMcpServer {
                 resource_uri: {
                   type: 'string',
                   description: 'Resource URI referencing the source image.'
-                },
-                image_token: {
-                  type: 'string',
-                  description: 'Existing Modal image token for the source image.'
                 },
                 image_base64: {
                   type: 'string',
@@ -459,10 +433,6 @@ export class AiImageMcpServer {
                   minimum: 0,
                   maximum: 1,
                   description: 'Blend strength between source image and prompt (default 0.7).'
-                },
-                mask_image_token: {
-                  type: 'string',
-                  description: 'Mask image token for inpainting (white = inpaint area, black = preserve area).'
                 },
                 mask_image_base64: {
                   type: 'string',
@@ -567,10 +537,6 @@ export class AiImageMcpServer {
             inputSchema: {
               type: 'object',
               properties: {
-                image_token: {
-                  type: 'string',
-                  description: 'Source image token (uploaded image ID).'
-                },
                 resource_uri: {
                   type: 'string',
                   description: 'Resource URI referencing the source image.'
@@ -705,9 +671,6 @@ export class AiImageMcpServer {
 
           case 'search_images':
             return await this.handleSearchImages(args as unknown as ImageSearchParams);
-
-          case 'get_image_by_token':
-            return await this.handleGetImageByToken(args as unknown as { image_token: string });
 
           case 'caption_image':
             return await this.handleCaptionImage(args as Record<string, unknown>);
@@ -1303,8 +1266,6 @@ export class AiImageMcpServer {
       `**Resource URI:** ${resourceUri}`,
     ];
 
-    summaryParts.push('', `**Image token:** ${response.image_token}`);
-
     if (response.download_url) {
       summaryParts.push(`**Download URL:** ${response.download_url}`);
     }
@@ -1314,7 +1275,6 @@ export class AiImageMcpServer {
     }
 
     const jsonPayload = {
-      image_token: response.image_token,
       resource_uri: resourceUri,
       mime_type: record.mimeType ?? 'image/png',
       download_url: response.download_url,
@@ -2053,7 +2013,6 @@ export class AiImageMcpServer {
       dtype: response.dtype,
       metadata: response.metadata,
       image_metadata: response.image_metadata,
-      image_token: response.image_token ?? reference.imageToken,
       resource_uri: resourceUri,
       stored_to_metadata: storedToMetadata ? true : undefined,
     });
@@ -2134,12 +2093,10 @@ export class AiImageMcpServer {
     const payload = this.pruneUndefined({
       job_id: jobId,
       status: jobResult.status,
-      image_token: jobResult.image_token ?? savedRecord.imageToken,
       resource_uri: resourceUri,
       mime_type: savedRecord.mimeType ?? 'image/png',
       created_at: savedRecord.createdAt,
       metadata: metadataRecord,
-      original_image_token: ensured.imageToken,
       used_params: { scale: scale ?? 2 },
     });
 
@@ -2299,14 +2256,12 @@ export class AiImageMcpServer {
     const resourceUri = getResourceUri(savedRecord.id);
 
     const payload = this.pruneUndefined({
-      image_token: response.image_token ?? savedRecord.imageToken,
       resource_uri: resourceUri,
       prompt,
       model: savedRecord.model,
       created_at: savedRecord.createdAt,
       used_params: response.used_params,
       metadata: metadataRecord,
-      source_image_token: ensured.imageToken,
     });
 
     const content: Array<Record<string, unknown>> = [];
@@ -2539,7 +2494,6 @@ export class AiImageMcpServer {
     const resourceUri = getResourceUri(savedRecord.id);
 
     const payload = this.pruneUndefined({
-      image_token: finalImageToken,
       resource_uri: resourceUri,
       mime_type: savedRecord.mimeType ?? 'image/png',
       created_at: savedRecord.createdAt,
@@ -2638,16 +2592,13 @@ export class AiImageMcpServer {
     const payload = this.pruneUndefined({
       success: response.success,
       message: response.message,
-      source_image_token: response.source_image_token,
       masks: response.masks.map(mask => ({
         mask_id: mask.mask_id,
-        mask_token: mask.mask_token,
         resource_uri: getResourceUri(mask.mask_token),
         confidence: mask.confidence,
       })),
       processed_images: response.processed_images.map(img => ({
         image_id: img.image_id,
-        image_token: img.image_token,
         resource_uri: getResourceUri(img.image_token),
       })),
     });

@@ -32,7 +32,6 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 
 		// 付随メタデータ（application/json）
 		{ "type": "application/json", "json": {
-				"image_token": "...",
 				"resource_uri": "resource://ai-image-api/image/<uuid>",
 				"mime_type": "image/png",
 				"used_params": { "model": "...", "width": 768, "height": 512, "steps": 20, "guidance_scale": 7.5 },
@@ -49,7 +48,7 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 大きな Base64 画像ペイロードは LLM のトークン予算を圧迫するため、ツール応答では既定で送出しません。画像は常にローカルキャッシュへ保存され、`resource_uri` で参照できます。
 
 - 環境変数 `AI_IMAGE_MCP_INCLUDE_BASE64` を `true`/`1`/`yes`/`on` に設定すると、ツール応答に画像の Base64 を含めます。
-- 既定値は未設定（= false）です。JSON には `image_token` と `resource_uri` が含まれるため、必要に応じて `readResource` で画像本体を取得してください。
+- 既定値は未設定（= false）です。JSON には `resource_uri` が含まれるため、必要に応じて `readResource` で画像本体を取得してください。
 
 例: Base64 を有効化してサーバを起動
 
@@ -57,8 +56,6 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 export AI_IMAGE_MCP_INCLUDE_BASE64=true
 npx --yes @mako10k/mcp-image
 ```
-
-注: `get_image_by_token` も同様に、既定ではメタデータのみを返し、Base64 は上記の環境変数を有効化した場合に限り返します。
 
 ## Setup
 
@@ -166,7 +163,6 @@ The JOB API server provides the following endpoints:
 - `GET /model-configs` - Model list (proxies Modal get-model-configs)
 - `GET /model-configs/{model_name}` - Model detail
 - `POST /optimize_params_v2` - Prompt optimization
-- `GET /images/{image_token}` - Image retrieval by token
 - `POST /optimize_and_generate_image` - Combined optimize + generate
 
 ## Available tools
@@ -290,7 +286,6 @@ All API calls are proxied through the JOB API server:
 - Model list: `GET /model-configs`
 - Model detail: `GET /model-configs/{model_name}`
 - Prompt optimization: `POST /optimize_params_v2`
-- Image retrieval: `GET /images/{image_token}`
 - Combined workflow: `POST /optimize_and_generate_image`
 
 Configure the JOB API server URL via `MODAL_JOB_API_URL` environment variable.

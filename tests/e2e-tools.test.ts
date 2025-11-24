@@ -66,7 +66,6 @@ test('generate_image: normal', async () => {
     include_base64: true,
     include_metadata: true,
   });
-  assert.ok(result.image_token, 'image_token should be present');
   assert.ok(result.image_base64, 'image_base64 should be present');
   generatedToken = result.image_token;
   
@@ -101,7 +100,7 @@ test('optimize_and_generate_image: normal', async () => {
     include_base64: true,
     include_metadata: true,
   });
-  assert.ok(genResult.image_token, 'image_token should be present');
+  assert.ok(genResult.image_base64, 'image_base64 should be present');
   
   // Save to local storage
   await saveGeneratedImage(genResult, result.prompt, 'dreamshaper8');
@@ -184,23 +183,25 @@ test('resource: uri and metadata', async () => {
 });
 
 test('caption_image handler: normal', { skip: !RUN_EXTENDED }, async () => {
-  assert.ok(generatedToken, 'generated token must be set before caption test');
-  const response = await (server as any).handleCaptionImage({ image_token: generatedToken });
+  assert.ok(generatedId, 'generated image id must be set before caption test');
+  const resource = storage.getResourceUri(generatedId);
+  const response = await (server as any).handleCaptionImage({ resource_uri: resource });
   assert.ok(Array.isArray(response.content), 'content should be an array');
   const textEntry = response.content.find((entry: any) => entry.type === 'text');
   assert.ok(textEntry, 'caption response should include text entry');
   const payload = JSON.parse(textEntry.text);
   assert.ok(typeof payload.caption === 'string' && payload.caption.length > 0, 'caption should be non-empty');
-  assert.ok(payload.image_token, 'payload should include image_token');
+  assert.ok(payload.resource_uri, 'payload should include resource_uri');
 });
 
 test('upscale_image handler: scale 2', async () => {
-  const response = await (server as any).handleUpscaleImage({ image_token: generatedToken, scale: 2, poll_timeout_seconds: 600 });
+  const resource = storage.getResourceUri(generatedId);
+  const response = await (server as any).handleUpscaleImage({ resource_uri: resource, scale: 2, poll_timeout_seconds: 600 });
   assert.ok(Array.isArray(response.content), 'content should be array');
   const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
   assert.ok(jsonEntry, 'upscale response should include JSON entry');
   const payload = JSON.parse(jsonEntry.text);
-  assert.ok(payload.image_token, 'upscale payload should include image_token');
+  assert.ok(payload.resource_uri, 'upscale payload should include resource_uri');
   assert.equal(payload.used_params.scale, 2);
 });
 
@@ -216,7 +217,7 @@ test('image_to_image handler: synchronous', { skip: !RUN_EXTENDED }, async () =>
   const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
   assert.ok(jsonEntry, 'img2img response should include JSON entry');
   const payload = JSON.parse(jsonEntry.text);
-  assert.ok(payload.image_token, 'img2img payload should include image_token');
+  assert.ok(payload.resource_uri, 'img2img payload should include resource_uri');
   assert.equal(payload.prompt, 'stylized minimal cat sketch');
 });
 
@@ -246,7 +247,7 @@ test('store_image_from_url handler: fallback upload', async () => {
     const textEntry = response.content.find((entry: any) => entry.type === 'text');
     assert.ok(textEntry, 'store_image_from_url should include JSON entry');
     const payload = JSON.parse(textEntry.text);
-    assert.ok(payload.image_token, 'payload should include image_token');
+    assert.ok(payload.resource_uri, 'payload should include resource_uri');
     assert.equal(payload.fallback_upload_used, true, 'fallback upload should be flagged');
 
     const imageEntry = response.content.find((entry: any) => entry.type === 'image');
