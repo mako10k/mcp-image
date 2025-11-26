@@ -48,7 +48,7 @@ For most workflows, prefer the `optimize_and_generate_image` tool, which optimiz
 大きな Base64 画像ペイロードは LLM のトークン予算を圧迫するため、ツール応答では既定で送出しません。画像は常にローカルキャッシュへ保存され、`resource_uri` で参照できます。
 
 - 環境変数 `AI_IMAGE_MCP_INCLUDE_BASE64` を `true`/`1`/`yes`/`on` に設定すると、ツール応答に画像の Base64 を含めます。
-- 既定値は未設定（= false）です。JSON には `resource_uri` が含まれるため、必要に応じて `readResource` で画像本体を取得してください。
+- 既定値は未設定（= false）です。JSON には `resource_uri` のみが含まれるため、必要に応じて `readResource` で画像本体を取得してください（`image_token` は内部処理専用です）。
 
 例: Base64 を有効化してサーバを起動
 

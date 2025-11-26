@@ -819,9 +819,6 @@ export class AiImageMcpServer {
       `Prompt: ${record.prompt}`,
     ];
 
-    if (record.imageToken) {
-      textLines.push(`Image Token: ${record.imageToken}`);
-    }
     if (record.downloadUrl) {
       textLines.push(`Download URL: ${record.downloadUrl}`);
     }
@@ -854,7 +851,6 @@ export class AiImageMcpServer {
             created_at: record.createdAt,
             model: record.model,
             prompt: record.prompt,
-            image_token: record.imageToken,
             download_url: record.downloadUrl,
             metadata: record.metadata,
           }),
@@ -941,7 +937,6 @@ export class AiImageMcpServer {
       model: record.model,
       prompt: record.prompt,
       mime_type: record.mimeType ?? 'image/png',
-      image_token: record.imageToken,
       download_url: record.downloadUrl,
       metadata: record.metadata,
     }));
@@ -958,83 +953,6 @@ export class AiImageMcpServer {
         },
       ],
     };
-  }
-
-  /**
-   * Handle image retrieval by token
-   */
-  private async handleGetImageByToken(params: { image_token: string }) {
-    const { image_token } = params;
-
-    if (!image_token || typeof image_token !== 'string' || image_token.trim().length === 0) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        '"image_token" is required and must be a non-empty string.'
-      );
-    }
-
-    const record = await getImageRecordByToken(image_token.trim());
-
-    if (!record) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `No image found with token: ${image_token}`
-      );
-    }
-
-    let base64: string | undefined;
-    if (this.includeBase64Flag) {
-      try {
-        base64 = await readImageBase64(record);
-      } catch (error) {
-        console.warn('[AI Image] Failed to read image binary for token', {
-          imageToken: image_token,
-          err: error instanceof Error ? error.message : error,
-        });
-      }
-    }
-
-    const resourceUri = getResourceUri(record.id);
-    const mimeType = record.mimeType ?? 'image/png';
-
-    const responseData: Record<string, unknown> = {
-      image_token: record.imageToken,
-      resource_uri: resourceUri,
-      mime_type: mimeType,
-      prompt: record.prompt,
-      model: record.model,
-      created_at: record.createdAt,
-    };
-
-    if (record.metadata) {
-      responseData.metadata = record.metadata;
-    }
-
-    if (record.downloadUrl) {
-      responseData.download_url = record.downloadUrl;
-    }
-
-    // Only include base64 in JSON when explicitly enabled
-    if (this.includeBase64Flag && base64 && base64.length > 0) {
-      responseData.image_base64 = base64;
-    }
-
-    const content: Array<Record<string, unknown>> = [];
-
-    if (this.includeBase64Flag && base64 && base64.length > 0) {
-      content.push({
-        type: 'image',
-        data: base64,
-        mimeType,
-      });
-    }
-
-    content.push({
-      type: 'text',
-      text: JSON.stringify(responseData),
-    });
-
-    return { content };
   }
 
   /**
@@ -2651,8 +2569,7 @@ export class AiImageMcpServer {
 
       const payload = {
         success: true,
-        image_token: record.imageToken!,
-        resource_uri: getResourceUri(record.imageToken!),
+        resource_uri: getResourceUri(record.id),
         width,
         height,
         command_count: params.commands.length,

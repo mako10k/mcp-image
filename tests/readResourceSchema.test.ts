@@ -61,7 +61,6 @@ test('readResource returns schema-friendly payload with blob and text entries', 
   assert.equal(textEntry.mimeType, 'application/json');
   assert.ok(typeof textEntry.text === 'string');
   const meta = JSON.parse(textEntry.text as string);
-  assert.equal(meta.image_token, 'test-token-123');
   assert.equal(meta.model, 'unit-test-model');
   assert.equal(meta.prompt, 'unit test prompt');
   } finally {
