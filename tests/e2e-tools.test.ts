@@ -194,6 +194,43 @@ test('caption_image handler: normal', { skip: !RUN_EXTENDED }, async () => {
   assert.ok(payload.resource_uri, 'payload should include resource_uri');
 });
 
+test('caption_image handler: image_url import', { skip: !RUN_EXTENDED }, async () => {
+  const pngBuffer = Buffer.from(ONE_BY_ONE_PNG_BASE64, 'base64');
+  const httpServer = createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': pngBuffer.length,
+    });
+    res.end(pngBuffer);
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = httpServer.address() as AddressInfo;
+    const imageUrl = `http://127.0.0.1:${address.port}/caption.png`;
+    const response = await (server as any).handleCaptionImage({ image_url: imageUrl });
+    assert.ok(Array.isArray(response.content), 'content should be an array');
+    const textEntry = response.content.find((entry: any) => entry.type === 'text');
+    assert.ok(textEntry, 'caption response should include text entry');
+    const payload = JSON.parse(textEntry.text);
+    assert.ok(typeof payload.caption === 'string' && payload.caption.length > 0, 'caption should be non-empty');
+    assert.ok(payload.resource_uri, 'payload should include resource_uri');
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
 test('upscale_image handler: scale 2', async () => {
   const resource = storage.getResourceUri(generatedId);
   const response = await (server as any).handleUpscaleImage({ resource_uri: resource, scale: 2, poll_timeout_seconds: 600 });

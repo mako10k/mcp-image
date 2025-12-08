@@ -55,13 +55,15 @@ interface ImageReferenceInput {
   resource_uri?: unknown;
   image_token?: unknown;
   image_base64?: unknown;
+  image_url?: unknown;
+  [key: string]: unknown;
 }
 
 interface ResolvedImageReference {
   imageToken?: string;
   record?: ImageRecord;
   directBase64?: string;
-  source: 'resource_uri' | 'image_token' | 'image_base64';
+  source: 'resource_uri' | 'image_token' | 'image_base64' | 'image_url';
 }
 
 export class AiImageMcpServer {
@@ -293,7 +295,7 @@ export class AiImageMcpServer {
                 },
                 image_url: {
                   type: 'string',
-                  description: 'Direct image URL. Use store_image_from_url first if possible.'
+                  description: 'Direct image URL. The server will cache it using the same pipeline as store_image_from_url.'
                 },
                 prompt: {
                   type: 'string',
@@ -1598,6 +1600,21 @@ export class AiImageMcpServer {
       };
     }
 
+    const imageUrl = this.sanitizeOptionalString(input.image_url);
+    if (imageUrl) {
+      const storeResult = await this.processStoreImageFromUrl({
+        ...input,
+        image_url: imageUrl,
+      } as Record<string, unknown>);
+      const tokenFromRecord = this.sanitizeOptionalString(storeResult.imageToken)
+        ?? this.sanitizeOptionalString(storeResult.savedRecord.imageToken);
+      return {
+        imageToken: tokenFromRecord,
+        record: storeResult.savedRecord,
+        source: 'image_url',
+      };
+    }
+
     const imageBase64 = this.sanitizeOptionalString(input.image_base64);
     if (imageBase64) {
       return {
@@ -1838,14 +1855,6 @@ export class AiImageMcpServer {
   }
 
   private async handleCaptionImage(params: Record<string, unknown>) {
-    const imageUrl = this.sanitizeOptionalString(params.image_url);
-    if (imageUrl) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'image_url is not supported directly. Use store_image_from_url first to register the image.'
-      );
-    }
-
     const reference = await this.resolveImageReference(params);
     const request: ImageCaptionRequest = {};
 
@@ -2198,7 +2207,7 @@ export class AiImageMcpServer {
     return { content };
   }
 
-  private async handleStoreImageFromUrl(params: Record<string, unknown>) {
+  private async processStoreImageFromUrl(params: Record<string, unknown>) {
     const imageUrl = this.sanitizeOptionalString(params.image_url);
     if (!imageUrl) {
       throw new McpError(ErrorCode.InvalidRequest, '"image_url" is required and must be a non-empty string.');
@@ -2409,13 +2418,25 @@ export class AiImageMcpServer {
       mimeType: mimeType ?? 'image/png',
     });
 
+    return {
+      savedRecord,
+      base64,
+      metadata: metadataForSave,
+      usedFallbackUpload,
+      imageToken: finalImageToken,
+    };
+  }
+
+  private async handleStoreImageFromUrl(params: Record<string, unknown>) {
+    const { savedRecord, base64, metadata, usedFallbackUpload } = await this.processStoreImageFromUrl(params);
+
     const resourceUri = getResourceUri(savedRecord.id);
 
     const payload = this.pruneUndefined({
       resource_uri: resourceUri,
       mime_type: savedRecord.mimeType ?? 'image/png',
       created_at: savedRecord.createdAt,
-      metadata: metadataForSave,
+      metadata,
       prompt: savedRecord.prompt,
       fallback_upload_used: usedFallbackUpload ? true : undefined,
     });
