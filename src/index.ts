@@ -1858,17 +1858,16 @@ export class AiImageMcpServer {
     const reference = await this.resolveImageReference(params);
     const request: ImageCaptionRequest = {};
 
+    // Resolve a usable base64 for both request and optional response inclusion
+    const resolvedBase64 = reference.directBase64 ?? (reference.record ? await this.readRecordBase64(reference.record) : undefined);
+
     if (reference.imageToken) {
       request.image_token = reference.imageToken;
     } else {
-      let base64 = reference.directBase64;
-      if (!base64 && reference.record) {
-        base64 = await this.readRecordBase64(reference.record);
-      }
-      if (!base64) {
+      if (!resolvedBase64) {
         throw new McpError(ErrorCode.InvalidRequest, 'image_base64 is required when image_token is unavailable.');
       }
-      request.image_base64 = base64;
+      request.image_base64 = resolvedBase64;
     }
 
     const prompt = this.sanitizeOptionalString(params.prompt);
@@ -1944,14 +1943,21 @@ export class AiImageMcpServer {
       stored_to_metadata: storedToMetadata ? true : undefined,
     });
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(payload),
-        },
-      ],
-    };
+    const content: Array<Record<string, unknown>> = [];
+    if (this.includeBase64Flag && resolvedBase64) {
+      content.push({
+        type: 'image',
+        data: resolvedBase64,
+        mimeType: reference.record?.mimeType ?? 'image/png',
+      });
+    }
+
+    content.push({
+      type: 'text',
+      text: JSON.stringify(payload),
+    });
+
+    return { content };
   }
 
   private async handleUpscaleImage(params: Record<string, unknown>) {
