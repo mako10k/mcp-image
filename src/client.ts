@@ -31,6 +31,10 @@ export class AiImageApiClient {
   private readonly jobApiUrl: string;
   private readonly jobApiHeaders: Record<string, string>;
 
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   constructor() {
     this.axiosInstance = axios.create({
       timeout: 300000, // 5-minute timeout (image generation can take some time)
@@ -122,6 +126,88 @@ export class AiImageApiClient {
     }
   }
 
+  /**
+   * Download an image token as base64.
+   *
+   * Some JOBAPI deployments return a JSON payload for `/images/{token}` (with `image_base64`).
+   * Others return a binary image (e.g., `image/png`). This helper supports both.
+   */
+  async downloadImageBase64(imageToken: string): Promise<string> {
+    try {
+      const isLikelyImageBytes = (buf: Buffer): boolean => {
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+          return true;
+        }
+        // JPEG: FF D8 FF
+        if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+          return true;
+        }
+        return false;
+      };
+
+      const fetchArrayBuffer = async (url: string) => {
+        return await this.axiosInstance.get(url, {
+          ...this.buildRequestConfig(),
+          responseType: 'arraybuffer',
+        });
+      };
+
+      const fetchWithRetry = async (url: string, attempts = 4): Promise<AxiosResponse<ArrayBuffer>> => {
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          try {
+            return await fetchArrayBuffer(url);
+          } catch (err) {
+            lastError = err;
+
+            // Segment/SAM results can be eventually-consistent; retry a few times on transient statuses.
+            const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+            const shouldRetry = status === 404 || (status !== undefined && status >= 500);
+
+            if (!shouldRetry || attempt === attempts) {
+              throw err;
+            }
+
+            const backoffMs = 200 * Math.pow(2, attempt - 1);
+            await this.sleep(backoffMs);
+          }
+        }
+
+        throw lastError instanceof Error ? lastError : new Error('Failed to fetch image bytes');
+      };
+
+      // Prefer explicit binary format first (common JOBAPI behavior)
+      const binaryUrl = `${this.jobApiUrl}/images/${encodeURIComponent(imageToken)}?format=binary`;
+      const binaryResp = await fetchWithRetry(binaryUrl);
+      const binaryContentType = (binaryResp.headers?.['content-type'] ?? '').toString().toLowerCase();
+      const binaryBuffer = Buffer.from(binaryResp.data as ArrayBuffer);
+
+      if (binaryContentType.startsWith('image/') || isLikelyImageBytes(binaryBuffer)) {
+        return binaryBuffer.toString('base64');
+      }
+
+      // If server returned JSON (or anything else), try JSON format with base64 included
+      const jsonUrl = `${this.jobApiUrl}/images/${encodeURIComponent(imageToken)}?format=json&include_base64=true`;
+      const jsonResp = await fetchWithRetry(jsonUrl);
+      const jsonContentType = (jsonResp.headers?.['content-type'] ?? '').toString().toLowerCase();
+      const jsonBuffer = Buffer.from(jsonResp.data as ArrayBuffer);
+
+      if (jsonContentType.startsWith('image/') || isLikelyImageBytes(jsonBuffer)) {
+        return jsonBuffer.toString('base64');
+      }
+
+      const text = jsonBuffer.toString('utf8');
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const base64 = typeof parsed.image_base64 === 'string' ? parsed.image_base64 : undefined;
+      if (!base64) {
+        throw new Error('JSON response did not include image_base64');
+      }
+      return base64;
+    } catch (error) {
+      throw this.handleError(error, `Failed to download image base64 for token ${imageToken}`);
+    }
+  }
   /**
    * Retrieve the list of available models via JOB API
    */
@@ -319,6 +405,11 @@ export class AiImageApiClient {
       const errorData = error.response?.data;
       
       if (statusCode === 404) {
+        const lower = message.toLowerCase();
+        const isImageTokenLookup = lower.includes('image token') || lower.includes('image base64') || lower.includes('metadata for image token');
+        if (isImageTokenLookup) {
+          return new Error(`${message}: Image not found`);
+        }
         return new Error(`${message}: Endpoint not found - Modal.com function not found`);
       } else if (statusCode === 500) {
         return new Error(`${message}: Server error - ${errorData?.detail || 'An internal error occurred in Modal.com'}`);

@@ -551,6 +551,10 @@ export class AiImageMcpServer {
                   type: 'string',
                   description: 'Base64-encoded source image. The server uploads this to obtain a token if needed.'
                 },
+                image_url: {
+                  type: 'string',
+                  description: 'Direct image URL. The server will cache it using the same pipeline as store_image_from_url.'
+                },
                 text_prompt: {
                   type: 'string',
                   description: 'Text prompt for object detection (e.g., "cat", "person").'
@@ -1629,7 +1633,7 @@ export class AiImageMcpServer {
 
     throw new McpError(
       ErrorCode.InvalidRequest,
-      'Provide at least one of resource_uri, image_token, or image_base64.'
+      'Provide at least one of resource_uri, image_url, image_token, or image_base64.'
     );
   }
 
@@ -1727,9 +1731,8 @@ export class AiImageMcpServer {
 
   private async fetchImageBase64(imageToken: string): Promise<string | undefined> {
     try {
-      const lookup = await this.getApiClient().getImageByToken(imageToken);
-      const base64 = this.sanitizeOptionalString(lookup.image_base64);
-      return base64;
+      const base64 = await this.getApiClient().downloadImageBase64(imageToken);
+      return this.sanitizeOptionalString(base64);
     } catch (error) {
       console.warn('[AI Image] Failed to download base64 for image token', {
         imageToken,
@@ -2540,18 +2543,82 @@ export class AiImageMcpServer {
       );
     }
 
+    const storedMasks = await Promise.all(
+      response.masks.map(async (mask) => {
+        const base64 = await this.fetchImageBase64(mask.mask_token);
+        if (!base64) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Segmentation succeeded but mask token could not be resolved to image_base64 (mask_id=${mask.mask_id}).`
+          );
+        }
+        const record = await saveImage(base64, {
+          prompt: textPrompt,
+          model: 'modal-sam-mask',
+          params: {
+            request,
+            mask: {
+              mask_id: mask.mask_id,
+              confidence: mask.confidence,
+            },
+          },
+          imageToken: mask.mask_token,
+          metadata: {
+            source: 'sam-mask',
+            mask_id: mask.mask_id,
+            confidence: mask.confidence,
+            derived_from: [ensured.imageToken],
+          },
+          mimeType: 'image/png',
+        });
+
+        return {
+          mask_id: mask.mask_id,
+          resource_uri: getResourceUri(record.id),
+          confidence: mask.confidence,
+        };
+      })
+    );
+
+    const storedProcessedImages = await Promise.all(
+      response.processed_images.map(async (img) => {
+        const base64 = await this.fetchImageBase64(img.image_token);
+        if (!base64) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Segmentation succeeded but processed image token could not be resolved to image_base64 (image_id=${img.image_id}).`
+          );
+        }
+        const record = await saveImage(base64, {
+          prompt: textPrompt,
+          model: 'modal-sam-processed',
+          params: {
+            request,
+            processed_image: {
+              image_id: img.image_id,
+            },
+          },
+          imageToken: img.image_token,
+          metadata: {
+            source: 'sam-processed',
+            image_id: img.image_id,
+            derived_from: [ensured.imageToken],
+          },
+          mimeType: 'image/png',
+        });
+
+        return {
+          image_id: img.image_id,
+          resource_uri: getResourceUri(record.id),
+        };
+      })
+    );
+
     const payload = this.pruneUndefined({
       success: response.success,
       message: response.message,
-      masks: response.masks.map(mask => ({
-        mask_id: mask.mask_id,
-        resource_uri: getResourceUri(mask.mask_token),
-        confidence: mask.confidence,
-      })),
-      processed_images: response.processed_images.map(img => ({
-        image_id: img.image_id,
-        resource_uri: getResourceUri(img.image_token),
-      })),
+      masks: storedMasks,
+      processed_images: storedProcessedImages,
     });
 
     return {

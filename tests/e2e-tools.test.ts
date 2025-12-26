@@ -242,6 +242,92 @@ test('upscale_image handler: scale 2', async () => {
   assert.equal(payload.used_params.scale, 2);
 });
 
+test('upscale_image handler: image_url import', { skip: !RUN_EXTENDED }, async () => {
+  const pngBuffer = Buffer.from(ONE_BY_ONE_PNG_BASE64, 'base64');
+  const httpServer = createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': pngBuffer.length,
+    });
+    res.end(pngBuffer);
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = httpServer.address() as AddressInfo;
+    const imageUrl = `http://127.0.0.1:${address.port}/upscale.png`;
+    const response = await (server as any).handleUpscaleImage({ image_url: imageUrl, scale: 2, poll_timeout_seconds: 600 });
+    assert.ok(Array.isArray(response.content), 'content should be array');
+    const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
+    assert.ok(jsonEntry, 'upscale response should include JSON entry');
+    const payload = JSON.parse(jsonEntry.text);
+    assert.ok(payload.resource_uri, 'payload should include resource_uri');
+    assert.ok(payload.used_params && payload.used_params.scale === 2, 'used_params.scale should be 2');
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test('segment_image handler: image_url import', { skip: !RUN_EXTENDED }, async () => {
+  const demoPngPath = path.resolve(process.cwd(), 'sample_1_dreamshaper8_1761012080810.png');
+  const pngBuffer = await fs.readFile(demoPngPath);
+
+  const httpServer = createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': pngBuffer.length,
+    });
+    res.end(pngBuffer);
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = httpServer.address() as AddressInfo;
+    const imageUrl = `http://127.0.0.1:${address.port}/cat.png`;
+    const response = await (server as any).handleSegmentImage({
+      image_url: imageUrl,
+      text_prompt: 'cat',
+      box_threshold: 0.25,
+      text_threshold: 0.25,
+    });
+
+    assert.ok(Array.isArray(response.content), 'content should be array');
+    const jsonEntry = response.content.find((entry: any) => entry.type === 'text');
+    assert.ok(jsonEntry, 'segment response should include JSON entry');
+    const payload = JSON.parse(jsonEntry.text);
+
+    assert.equal(payload.success, true, 'segment payload should be success=true');
+    assert.ok(Array.isArray(payload.masks), 'segment payload should include masks array');
+    assert.ok(payload.masks.length > 0, 'segment should return at least one mask for demo cat image');
+    assert.ok(typeof payload.masks[0].resource_uri === 'string', 'mask should include resource_uri');
+    assert.ok(typeof payload.masks[0].confidence === 'number', 'mask should include confidence');
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
 test('image_to_image handler: synchronous', { skip: !RUN_EXTENDED }, async () => {
   const resource = storage.getResourceUri(generatedId);
   const response = await (server as any).handleImageToImage({
