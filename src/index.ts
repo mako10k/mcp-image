@@ -355,6 +355,10 @@ export class AiImageMcpServer {
                   type: 'string',
                   description: 'Base64-encoded image data. The server will upload this before upscaling.'
                 },
+                image_url: {
+                  type: 'string',
+                  description: 'Direct image URL. The server will cache it using the same pipeline as store_image_from_url.'
+                },
                 scale: {
                   type: 'integer',
                   minimum: 1,
@@ -2024,13 +2028,15 @@ export class AiImageMcpServer {
     const resourceUri = getResourceUri(savedRecord.id);
 
     const payload = this.pruneUndefined({
-      job_id: jobId,
-      status: jobResult.status,
       resource_uri: resourceUri,
+      prompt: originalPrompt,
+      model: savedRecord.model,
       mime_type: savedRecord.mimeType ?? 'image/png',
       created_at: savedRecord.createdAt,
-      metadata: metadataRecord,
       used_params: { scale: scale ?? 2 },
+      metadata: metadataRecord,
+      job_id: jobId,
+      status: jobResult.status,
     });
 
     const content: Array<Record<string, unknown>> = [];
